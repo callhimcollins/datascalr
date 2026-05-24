@@ -1,0 +1,66 @@
+.card {
+  border-radius: 0.75rem;
+  border: 1px solid #cc5d0f;
+  padding: 1.25rem;
+  cursor: pointer;
+  overflow: hidden;
+  transition: transform 0.3s ease-out, border-color 0.3s ease-out;
+  background-color: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(32px);
+  -webkit-backdrop-filter: blur(32px);
+  will-change: backdrop-filter;
+}
+
+.card:hover {
+  border-color: rgba(9, 9, 219, 0.8);
+  transform: scale(1.04);
+}
+
+:global(.dark) .card {
+  border-color: rgba(153, 153, 153, 0.6);
+}
+
+:global(.dark) .card:hover {
+  border-color: rgba(113, 113, 122, 0.6);
+}
+
+:global(.dark) .card {
+  border-color: #cc5d0f;
+  background-color: rgba(0, 0, 0, 0.1);
+}
+
+:global(.dark) .card:hover {
+  border-color: rgba(82, 82, 91, 0.8);
+}
+
+.icon {
+  width: 1.5rem;
+  height: 1.5rem;
+  margin-bottom: 0.75rem;
+  color: rgba(161, 161, 170, 1);
+}
+
+:global(.dark) .icon {
+  color: rgba(113, 113, 122, 1);
+}
+
+.title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #18181b;
+}
+
+:global(.dark) .title {
+  color: #f4f4f5;
+}
+
+.description {
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  line-height: 1.625;
+  color: rgba(113, 113, 122, 1);
+}
+
+:global(.dark) .description {
+  color: rgba(161, 161, 170, 1);
+}
