@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ThemeProvider } from "@/lib/theme";
+import { SimProvider } from "@/lib/simulation-context";
 import { Navbar } from "@/components/Navbar/Navbar";
 import "./globals.css";
 
@@ -44,8 +45,10 @@ export default function RootLayout({
       </head>
       <body className="min-h-full flex flex-col">
         <ThemeProvider>
-          <Navbar />
-          <div className="flex flex-col flex-1 pt-14">{children}</div>
+          <SimProvider>
+            <Navbar />
+            <div className="flex flex-col flex-1 pt-14">{children}</div>
+          </SimProvider>
         </ThemeProvider>
 
       </body>

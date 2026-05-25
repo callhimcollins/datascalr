@@ -114,7 +114,7 @@ export default function ConfigurePage() {
                 className="!mt-6 w-full cursor-pointer bg-gradient-to-r from-amber-600 to-orange-600 text-white hover:from-amber-500 hover:to-orange-500 disabled:opacity-40 disabled:pointer-events-auto disabled:cursor-not-allowed disabled:hover:from-amber-600 disabled:hover:to-orange-600 shadow-sm hover:shadow-md hover:shadow-amber-600/20 transition-all"
                 size="lg"
               >
-                Fire
+                Simulate
               </Button>
             </CardContent>
           </Card>

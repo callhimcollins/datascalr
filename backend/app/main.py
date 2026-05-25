@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .routes.generate import router as generate_router
 from .routes.runs import router as runs_router
+from .routes.stream import router as stream_router
 
 app = FastAPI(title="datascalr API", version="0.1.0")
 
@@ -22,6 +23,7 @@ app.add_middleware(
 
 app.include_router(generate_router)
 app.include_router(runs_router)
+app.include_router(stream_router)
 
 
 @app.get("/")

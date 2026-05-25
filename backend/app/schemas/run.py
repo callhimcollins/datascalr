@@ -7,6 +7,7 @@ class StartRunRequest(BaseModel):
     concurrency: int
     ramp_up: int
     duration: int
+    platform: str = ""
 
 
 class StartRunResponse(BaseModel):
