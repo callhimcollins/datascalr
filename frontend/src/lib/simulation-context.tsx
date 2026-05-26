@@ -5,11 +5,25 @@ import { createContext, useContext, useState } from "react";
 export type SimEndpoint = {
   method: string;
   path: string;
+  weight?: number;
 };
 
 type SimState = {
   baseUrl: string;
   endpoints: SimEndpoint[];
+};
+
+export type EndpointConfig = {
+  method: string;
+  path: string;
+  description: string;
+  weight: number;
+  body_template: Record<string, unknown> | null;
+};
+
+export type FullConfig = {
+  base_url: string;
+  endpoints: EndpointConfig[];
 };
 
 const SimContext = createContext<{

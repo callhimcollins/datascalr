@@ -15,6 +15,7 @@ async def start_run(req: StartRunRequest):
     runs[run_id] = {
         "status": "running",
         "config": req.model_dump(),
+        "metrics": [],
     }
     return StartRunResponse(run_id=run_id, status="running")
 

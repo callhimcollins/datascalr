@@ -2,13 +2,9 @@
 
 import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { BackButton } from "@/components/BackButton";
-import { ConfigPreview, type Config } from "@/components/ConfigPreview";
 import { RunningView } from "@/components/RunningView";
 import { useSim } from "@/lib/simulation-context";
 import { useSSE } from "@/lib/use-sse";
-
-type Phase = "config" | "running";
 
 function SimulateInner() {
   const searchParams = useSearchParams();
@@ -17,64 +13,19 @@ function SimulateInner() {
   const rampUp = searchParams.get("rampUp") ?? "5";
   const duration = searchParams.get("duration") ?? "30";
 
-  const [config, setConfig] = useState<Config | null>(null);
+  const { sim } = useSim();
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [phase, setPhase] = useState<Phase>("config");
   const [runId, setRunId] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [progress, setProgress] = useState(0);
   const startedAtRef = useRef<number | null>(null);
-  const { setSim } = useSim();
 
   const sseUrl = runId ? `http://localhost:8000/api/runs/${runId}/stream` : null;
-  const { data: latencyHistory } = useSSE(sseUrl);
-
-  useEffect(() => {
-    return () => setSim(null);
-  }, [setSim]);
-
-  // Fetch config on mount based on search params
-  useEffect(() => {
-    if (!platform) return;
-
-    setLoading(true);
-    setError(null);
-
-    fetch("http://localhost:8000/api/generate-config", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        platform,
-        concurrency: Number(concurrency),
-        ramp_up: Number(rampUp),
-        duration: Number(duration),
-      }),
-    })
-      .then((res) => {
-        if (!res.ok)
-          return res.json().then((d) => Promise.reject(d.detail ?? res.statusText));
-        return res.json();
-      })
-      .then((data: Config) => {
-        setConfig(data);
-        setSim({
-          baseUrl: data.base_url,
-          endpoints: data.endpoints.map((ep) => ({
-            method: ep.method,
-            path: ep.path,
-          })),
-        });
-      })
-      .catch((err) => {
-        setError(err instanceof Error ? err.message : String(err));
-      })
-      .finally(() => setLoading(false));
-  }, [platform, concurrency, rampUp, duration, setSim]);
+  const { data: latencyHistory, isComplete, comparison } = useSSE(sseUrl);
 
   // Start a simulation run
   const startRun = useCallback(async () => {
-    if (!config) return;
+    if (!sim) return;
 
     setError(null);
     try {
@@ -82,8 +33,8 @@ function SimulateInner() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          base_url: config.base_url,
-          endpoints: config.endpoints,
+          base_url: sim.baseUrl,
+          endpoints: sim.endpoints,
           concurrency: Number(concurrency),
           ramp_up: Number(rampUp),
           duration: Number(duration),
@@ -98,25 +49,33 @@ function SimulateInner() {
 
       const data = await res.json();
       setRunId(data.run_id);
-      setPhase("running");
       setElapsed(0);
       setProgress(0);
       startedAtRef.current = Date.now();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [config, concurrency, rampUp, duration, platform]);
+  }, [sim, concurrency, rampUp, duration, platform]);
 
-  // Auto-start simulation once config is loaded
+  // Start immediately on mount
   useEffect(() => {
-    if (config && phase === "config") {
+    if (sim) {
       startRun();
     }
-  }, [config, phase, startRun]);
+  }, [sim, startRun]);
 
-  // Timer management during the running phase
+  const handleRunAgain = useCallback(() => {
+    window.location.reload();
+  }, []);
+
+  const handleConfigure = useCallback(() => {
+    const qs = new URLSearchParams({ platform, concurrency, rampUp, duration });
+    window.location.href = `/configure?${qs.toString()}`;
+  }, [platform, concurrency, rampUp, duration]);
+
+  // Timer management
   useEffect(() => {
-    if (phase !== "running") return;
+    if (!runId) return;
 
     startedAtRef.current = Date.now();
 
@@ -144,25 +103,12 @@ function SimulateInner() {
       clearInterval(smoothProgress);
       clearTimeout(endTimeout);
     };
-  }, [phase, duration]);
+  }, [runId, duration]);
 
   return (
-    <main className="flex flex-1 flex-col items-center px-12 pt-0">
+    <main className="flex flex-1 flex-col items-center px-4 md:px-12 pt-0">
       <div className="w-full max-w-full">
-        {phase === "config" && <BackButton href="/configure" />}
-
-        {phase === "config" && (
-          <>
-            <h1 className="mt-6 text-4xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
-              Simulate
-            </h1>
-            <p className="mt-1 text-sm font-semibold text-zinc-500 dark:text-zinc-400">
-              {concurrency} users · {rampUp}s ramp-up · {duration}s duration
-            </p>
-          </>
-        )}
-
-        {!platform && (
+        {!sim && (
           <p className="mt-16 text-center text-zinc-500 dark:text-zinc-500">
             No configuration provided.
             <br />
@@ -173,32 +119,13 @@ function SimulateInner() {
           </p>
         )}
 
-        {loading && (
-          <div className="mt-16 flex flex-col items-center gap-3 text-zinc-500 dark:text-zinc-400">
-            <div className="h-6 w-6 animate-spin rounded-full border-2 border-zinc-400 border-t-amber-600" />
-            <p className="text-sm">
-              Generating traffic configuration from your description...
-            </p>
-          </div>
-        )}
-
         {error && (
           <div className="mt-8 rounded-lg border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950 px-4 py-3 text-sm text-red-700 dark:text-red-300">
             {error}
           </div>
         )}
 
-        {config && phase === "config" && (
-          <ConfigPreview
-            config={config}
-            concurrency={concurrency}
-            rampUp={rampUp}
-            duration={duration}
-            onStart={startRun}
-          />
-        )}
-
-        {config && phase === "running" && (
+        {sim && runId && (
           <RunningView
             latencyHistory={latencyHistory}
             concurrency={concurrency}
@@ -206,6 +133,10 @@ function SimulateInner() {
             duration={duration}
             elapsed={elapsed}
             progress={progress}
+            isComplete={isComplete}
+            comparison={comparison}
+            onRunAgain={handleRunAgain}
+            onConfigure={handleConfigure}
           />
         )}
       </div>

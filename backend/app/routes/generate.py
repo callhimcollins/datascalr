@@ -10,28 +10,68 @@ router = APIRouter()
 
 SYSTEM_PROMPT = """You are a configuration generator for a load-testing platform called DataScalr.
 
-The user describes a REST API in natural language. Extract the base URL and each endpoint they describe.
+The user describes a platform or API in natural language. You MUST generate a load-test config that targets our reference API at `http://localhost:8001`.
+
+This reference API has 3 endpoints that each accept `?cached=true/false`:
+1. `GET /api/items?cached=` — List items (simple PG query, ~10ms uncached)
+2. `GET /api/items/search?q=:term&cached=` — Full-text search (~30-100ms uncached, slowest endpoint)
+3. `GET /api/items/stats?cached=` — Category aggregation (~20-60ms uncached)
 
 Return ONLY valid JSON with this structure:
 {
-  "base_url": "api.datascalr.com/twitter",
+  "base_url": "http://localhost:8001",
   "endpoints": [
     {
       "method": "GET",
-      "path": "/tweets",
-      "description": "List all tasks",
-      "weight": 0.4
+      "path": "/api/items/search?q=:term&cached=true",
+      "description": "Search items with Redis caching",
+      "weight": 0.25
+    },
+    {
+      "method": "GET",
+      "path": "/api/items/search?q=:term&cached=false",
+      "description": "Search items directly from PostgreSQL",
+      "weight": 0.15
+    },
+    {
+      "method": "GET",
+      "path": "/api/items?cached=true",
+      "description": "List items with Redis caching",
+      "weight": 0.25
+    },
+    {
+      "method": "GET",
+      "path": "/api/items?cached=false",
+      "description": "List items directly from PostgreSQL",
+      "weight": 0.15
+    },
+    {
+      "method": "GET",
+      "path": "/api/items/stats?cached=true",
+      "description": "Category stats with Redis caching",
+      "weight": 0.15
+    },
+    {
+      "method": "GET",
+      "path": "/api/items/stats?cached=false",
+      "description": "Category stats directly from PostgreSQL",
+      "weight": 0.05
     }
   ]
 }
 
 Rules:
-- Use `api.datascalr.com/<service-name>` as the base URL (e.g. `api.datascalr.com/twitter`, `api.datascalr.com/task-manager`). Never use real domains.
-- Each `method` must be one of GET, POST, PUT, PATCH, DELETE.
-- `path` is the URL path WITH path parameters (e.g. /tweets/:id).
-- `weight` is the proportion of traffic for this endpoint (0.0 to 1.0). All weights should sum to 1.0. Distribute weights based on how heavily the endpoint is typically used — listing/reading should generally get higher weight than creating or deleting.
-- If the user mentions a request body, include a `body_template` object with example fields and placeholder values (strings for text fields, numbers for numeric fields, booleans for flags).
-- Aim for 3-6 endpoints if the description gives enough context. If the user only describes one or two, just return those.
+- `base_url` MUST be `http://localhost:8001`. Never change this.
+- Generate endpoints for ALL 3 paths (items, search, stats), each with a cached and uncached variant. Total of 6 endpoints.
+- The `:term` in search paths is a placeholder — the engine replaces it with random keywords.
+- The user's platform description determines the WEIGHT distribution:
+  - Real-time / social / chat / feed: heavier on cached search (feed reading habits) and cached list
+  - Ecommerce / marketplace: balanced across all 3, with more uncached stats (inventory checks)
+  - Analytics / dashboard / reporting: heavy on stats (both cached and uncached), lighter on search
+  - API gateway / microservice / backend: evenly distributed, more cached than uncached
+- Weights across all 6 endpoints MUST sum to 1.0.
+- Update each `description` field to reflect why the weight fits the user's platform.
+- Do NOT include `body_template` — these are all GET requests.
 - Do not include markdown code fences or any text outside the JSON."""
 
 

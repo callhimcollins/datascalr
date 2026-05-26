@@ -1,103 +1,148 @@
+from __future__ import annotations
+
 import asyncio
 import json
-import math
-import random
+from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from .runs import runs
+from ..engine import run_engine
+from ..metrics.analysis import analyze
+from ..metrics.collector import MetricsCollector
 
 router = APIRouter()
 
-FAST_STORAGE_MS = 3.0
-SLOW_STORAGE_MS = 80.0
-SLOW_STORAGE_STD = 10.0
-
-# RPS saturation thresholds
-SERVER_RPS_SAT = 30
-DB_RPS_SAT = 15
+SAVE_DIR = Path(__file__).resolve().parent.parent.parent.parent / "simulation_runs"
 
 
-def estimate_think_time(platform: str) -> float:
-    """Estimate average seconds between requests per user based on platform type."""
-    p = platform.lower()
-    if any(w in p for w in ["social", "chat", "feed", "messaging", "realtime", "real-time"]):
-        return 2.0
-    if any(w in p for w in ["ecommerce", "shop", "store", "marketplace", "browse"]):
-        return 3.5
-    if any(w in p for w in ["task", "todo", "project", "management", "board", "tracker"]):
-        return 5.0
-    if any(w in p for w in ["analytics", "dashboard", "monitor"]):
-        return 4.0
-    if any(w in p for w in ["api", "microservice", "service", "gateway"]):
-        return 1.0
-    return 3.0
+def _save_run(run_id: str, run: dict) -> None:
+    metrics = run.get("metrics", [])
+    config = run.get("config", {})
 
+    cache_vals = [m["cache"] for m in metrics if m.get("cache") is not None]
+    no_cache_vals = [m["noCache"] for m in metrics if m.get("noCache") is not None]
 
-def sigmoid_error(rps: float, sat: float, k: float = 3.0) -> float:
-    """Smooth S-curve: 0 below sat, 0.5 at sat, approaches 1 above sat."""
-    ratio = rps / sat
-    return 1.0 / (1.0 + math.exp(-k * (ratio - 1.0)))
+    # Compute steady-state averages (skip ramp-up period)
+    ramp_up = config.get("ramp_up", 0)
+    steady_state_start = max(ramp_up + 1, 1)
+    cache_steady = [m["cache"] for m in metrics[steady_state_start:] if m.get("cache") is not None]
+    no_cache_steady = [m["noCache"] for m in metrics[steady_state_start:] if m.get("noCache") is not None]
+
+    avg_cache = round(sum(cache_vals) / len(cache_vals), 1) if cache_vals else 0.0
+    avg_no_cache = round(sum(no_cache_vals) / len(no_cache_vals), 1) if no_cache_vals else 0.0
+    avg_cache_steady = round(sum(cache_steady) / len(cache_steady), 1) if cache_steady else 0.0
+    avg_no_cache_steady = round(sum(no_cache_steady) / len(no_cache_steady), 1) if no_cache_steady else 0.0
+
+    # Compute comparison
+    comparison = None
+    if avg_cache_steady > 0 and avg_no_cache_steady > 0:
+        diff = avg_no_cache_steady - avg_cache_steady
+        pct_diff = (diff / avg_no_cache_steady) * 100 if avg_no_cache_steady > 0 else 0
+        comparison = {
+            "cache_ms": avg_cache_steady,
+            "no_cache_ms": avg_no_cache_steady,
+            "difference_ms": round(diff, 1),
+            "percentage_faster": round(pct_diff, 1),
+            "winner": "cache" if diff > 0 else "no_cache" if diff < 0 else "tie",
+        }
+
+    data = {
+        "run_id": run_id,
+        "config": config,
+        "avg_cache_ms": avg_cache,
+        "avg_no_cache_ms": avg_no_cache,
+        "avg_cache_steady_ms": avg_cache_steady,
+        "avg_no_cache_steady_ms": avg_no_cache_steady,
+        "comparison": comparison,
+        "metrics": metrics,
+    }
+
+    SAVE_DIR.mkdir(exist_ok=True)
+    safe = f"{str(config.get('platform', ''))[:20]}_{config.get('concurrency', '?')}u_{config.get('duration', '?')}s"
+    safe = "".join(c if c.isalnum() or c in "_-" else "_" for c in safe)
+    path = SAVE_DIR / f"{run_id}_{safe}.json"
+    path.write_text(json.dumps(data, indent=2))
 
 
 @router.get("/api/runs/{run_id}/stream")
-async def stream_run(run_id: str):
+async def stream_run(run_id: str, request: Request):
     run = runs.get(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
 
     config = run["config"]
-    duration = config["duration"]
-    ramp_up = config.get("ramp_up", 5)
-    max_concurrency = config.get("concurrency", 10)
-    platform = config.get("platform", "")
-
-    think_time = estimate_think_time(platform)
-
-    base = 2.0
+    collector = MetricsCollector()
+    stop_event = asyncio.Event()
+    vu_tasks: list[asyncio.Task] = []
 
     async def event_stream():
-        nonlocal base
+        engine_task = asyncio.create_task(
+            run_engine(config, collector, stop_event, vu_tasks)
+        )
 
-        for t in range(1, duration + 1):
-            await asyncio.sleep(1)
+        history: list[dict] = []
+        analysis_state: dict = {}
 
-            # --- Load: RPS ramps smoothly via sigmoid load factor ---
-            load_factor = min(1.0, t / max(ramp_up, 1))
-            current_concurrency = max_concurrency * load_factor
-            rps = current_concurrency / think_time
+        try:
+            for t in range(1, config["duration"] + 1):
+                if await request.is_disconnected():
+                    stop_event.set()
+                    break
 
-            # --- Error rates (sigmoid, smooth) ---
-            cache_pct = round(sigmoid_error(rps, SERVER_RPS_SAT) * 100, 1)
-            no_cache_pct = round(sigmoid_error(rps, DB_RPS_SAT) * 100, 1)
+                await asyncio.sleep(1)
 
-            # --- Base latency: driven by RPS ---
-            target = 3.0 + rps * 0.08
+                bucket = collector.compute_bucket(t)
+                bucket["events"] = analyze(t, bucket, config, history, analysis_state)
+                run["metrics"].append(bucket)
+                history.append(bucket)
+                yield f"data: {json.dumps(bucket)}\n\n"
+        finally:
+            stop_event.set()
 
-            base += (target - base) * random.uniform(0.1, 0.4)
-            base += random.gauss(0, 1.0)
+            for task in vu_tasks:
+                task.cancel()
+            engine_task.cancel()
 
-            if random.random() < 0.08:
-                base += random.uniform(5, 15)
+            try:
+                await engine_task
+            except asyncio.CancelledError:
+                pass
 
-            base = max(1.0, base)
+            for task in vu_tasks:
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
-            cache = round(base + FAST_STORAGE_MS, 1)
-            no_cache = round(
-                base + max(0, random.gauss(SLOW_STORAGE_MS, SLOW_STORAGE_STD)),
-                1,
-            )
-
-            data = json.dumps({
-                "t": t,
-                "cache": cache,
-                "noCache": no_cache,
-                "cachePct": cache_pct,
-                "noCachePct": no_cache_pct,
-            })
-            yield f"data: {data}\n\n"
-
-        yield "data: {\"done\": true}\n\n"
+            run["status"] = "completed"
+            _save_run(run_id, run)
+            
+            # Send final summary with comparison
+            cache_vals = [m["cache"] for m in run["metrics"] if m.get("cache") is not None]
+            no_cache_vals = [m["noCache"] for m in run["metrics"] if m.get("noCache") is not None]
+            
+            ramp_up = config.get("ramp_up", 0)
+            steady_state_start = max(ramp_up + 1, 1)
+            cache_steady = [m["cache"] for m in run["metrics"][steady_state_start:] if m.get("cache") is not None]
+            no_cache_steady = [m["noCache"] for m in run["metrics"][steady_state_start:] if m.get("noCache") is not None]
+            
+            avg_cache_steady = round(sum(cache_steady) / len(cache_steady), 1) if cache_steady else 0.0
+            avg_no_cache_steady = round(sum(no_cache_steady) / len(no_cache_steady), 1) if no_cache_steady else 0.0
+            
+            comparison = None
+            if avg_cache_steady > 0 and avg_no_cache_steady > 0:
+                diff = avg_no_cache_steady - avg_cache_steady
+                pct_diff = (diff / avg_no_cache_steady) * 100 if avg_no_cache_steady > 0 else 0
+                comparison = {
+                    "cache_ms": avg_cache_steady,
+                    "no_cache_ms": avg_no_cache_steady,
+                    "difference_ms": round(diff, 1),
+                    "percentage_faster": round(pct_diff, 1),
+                    "winner": "cache" if diff > 0 else "no_cache" if diff < 0 else "tie",
+                }
+            
+            yield f"data: {json.dumps({'done': True, 'comparison': comparison})}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

@@ -3,174 +3,166 @@
 ## High-Level Data Flow
 
 ```
-Frontend (Next.js)          Backend (FastAPI)
-┌─────────────────┐        ┌──────────────────────────────┐
-│  Simulation Form │──────→│ /api/runs  (create run)     │
-│                  │        │       ↓                      │
-│  Real-time Chart │←──────│  Engine  (asyncio tasks)     │
-│     + Logs       │   SSE  │       ↓                      │
-│                  │        │  Metrics Collector           │
-│  History /       │←──────│       ↓                      │
-│  Compare         │  REST  │  Storage (SQLite on disk)   │
-└─────────────────┘        └──────────────────────────────┘
+Frontend (Next.js)          DataScalr Backend (FastAPI)         Target API (Docker)
+┌─────────────────┐        ┌──────────────────────────────┐   ┌──────────────────────┐
+│  Configure Page  │──────→│  POST /api/runs  (create)   │   │  FastAPI             │
+│                  │        │       ↓                      │   │                      │
+│  Simulate Page   │←──────│  Engine spawns VUs           │──▶│  GET /api/items     │
+│  (SSE + charts)  │   SSE  │  (asyncio httpx tasks)      │   │  ?cached=true/false  │
+│                  │        │       ↓                      │   └────────┬─────┬──────┘
+│  Supabase (read) │◀──────│  MetricsCollector            │            │     │
+│  run history     │  REST  │       ↓                      │   ┌────────▼─────▼──────┐
+└─────────────────┘        │  Supabase (persist)          │   │  PostgreSQL   Redis  │
+                           └──────────────────────────────┘   │  (Docker)    (Docker)│
+                                                              └──────────────────────┘
 ```
 
-## Layers — Bottom to Top
+## Tiers
 
-### Storage (persistent)
+### Tier 1: Target Infrastructure (Docker Compose)
 
-Every simulation run is saved to SQLite so results survive restarts and can be analyzed later (e.g., "did adding that index improve p99 across all runs this week?").
+Three services defined in `docker-compose.yml`:
 
-Tables:
-- **runs** — one row per simulation: id, config (JSON), status, start/end timestamps
-- **metrics_buckets** — one row per second per run: timestamp, count, p50/p95/p99 latency, error count, throughput
-- **request_samples** — (optional) raw per-request data for drill-down analysis
+- **PostgreSQL 16** — the target API's database. Contains a single `items` table seeded with 10,000 realistic JSON rows (id, name, data, created_at). This is what virtual users indirectly query during a simulation.
+- **Redis 7** — the target API's cache layer. Stores serialized query results with a TTL. Demonstrates the latency difference between cache hits and direct database queries.
+- **Target API** — a FastAPI reference app with a single endpoint `GET /api/items`. Accepts a `cached` query parameter:
+  - `?cached=true` — checks Redis. On hit, returns immediately (~1ms). On miss, queries PostgreSQL, caches result in Redis with TTL, returns (~20ms). Sets `X-Cache: HIT` or `X-Cache: MISS` response header.
+  - `?cached=false` — queries PostgreSQL directly every time (~20-80ms). Under load, PG connection pool contention causes real latency spikes, timeouts, and errors.
 
-SQLite keeps things zero-setup for local use. The storage layer is abstracted behind a `Store` interface so swapping to Postgres later is isolated.
+The target API uses `asyncpg` with a connection pool (min_size=4, max_size=20). The pool size is the bottleneck that makes the uncached path degrade realistically under high concurrency.
 
-### Metrics Collector
+### Tier 2: DataScalr Engine (host)
 
-Each virtual user reports every request result (latency in ms, status code, error if any). The collector:
+Runs as asyncio tasks inside the FastAPI process on the host machine (hot-reload enabled).
 
-1. Receives raw samples from all running VUs
-2. Buckets them by wall-clock second
-3. At each second boundary, computes: count, p50/p95/p99, error count
-4. Pushes the bucket to the store AND broadcasts it via SSE to the frontend
-5. Stores to SQLite after the run completes (or periodically during long runs)
+#### Runner (engine/runner.py)
 
-Percentiles are computed from the raw samples in each bucket using the nearest-rank method — efficient for the volume we expect (~thousands per second).
+Receives a run config and orchestrates the entire simulation:
 
-### Engine
+1. Creates a shared `httpx.AsyncClient` with `max_connections=1000`
+2. Creates a `MetricsCollector` instance that all VUs share
+3. Spawns virtual user tasks, staggering their start times evenly across the ramp-up period
+4. Blocks until the stop event fires (run duration expires or client disconnects)
+5. Cancels all VU tasks and finalizes the run
 
-The simulation engine orchestrates a single run:
+#### Virtual User (engine/virtual_user.py)
 
-1. **Runner** receives a `RunConfig` (target URL, concurrency, duration, ramp-up time, think time range)
-2. It spawns a `TaskGroup` of virtual user coroutines
-3. During ramp-up, it staggers their start so users arrive gradually
-4. Each VU runs its loop until the run duration expires
-5. When the run ends (or is cancelled), the runner cancels all VU tasks and finalizes the run in storage
-
-Engine state machine per run:
-
-```
-Pending → Running → Completed
-               ↘ Cancelled (user hits stop)
-```
-
-### Virtual User
-
-A single virtual user is a coroutine that loops:
+Each VU is an infinite coroutine loop:
 
 ```
 loop:
-    send HTTP request (httpx.AsyncClient)
-    record: latency, status, error
-    report sample to Metrics Collector
-    sleep for random think time (between configured min/max)
+    pick endpoint from config by weight          # weighted random selection
+    fire HTTP request via httpx.AsyncClient       # real network I/O
+    record: latency, status_code, error           # real measurements
+    report sample to MetricsCollector             # thread-safe buffer append
+    sleep for think_time                          # normally-distributed around base
 ```
 
-Each VU has its own `httpx.AsyncClient` (so connection pooling per VU is realistic). All VUs for a run share a single `MetricsCollector` instance via a queue or direct call.
+Think time is estimated from the platform type (same logic as the old mock: social=2s, ecommerce=3.5s, api=1s, etc.) with gaussian jitter applied per-VU.
 
-### Schemas (Pydantic)
+Error taxonomy (all real):
+- **TimeoutException** — request exceeded 10-second timeout
+- **ConnectError** — connection refused or DNS failure
+- **RemoteProtocolError** — connection reset mid-request
+- **Non-2xx HTTP status** — 4xx/5xx application-level errors
 
-| Schema | Fields |
-|---|---|
-| `RunConfig` | target_url, vu_count, duration_secs, ramp_up_secs, think_time_min/max, method, headers, body_template |
-| `RunStatus` | id, status, current_vus, elapsed_secs, total_buckets |
-| `MetricsBucket` | timestamp, request_count, p50, p95, p99, avg, error_count, rps |
-| `RunSummary` | id, config, status, start_time, end_time, summary_stats (overall p50/p95/p99, total requests, error %) |
+### Tier 3: Metrics Collector (metrics/collector.py)
 
-### API Routes
+Receives raw `Sample` objects from all VUs and aggregates them:
+
+1. Samples are appended to a shared buffer via `add_sample()` — a lightweight, lock-free operation in asyncio
+2. Every second, the SSE handler calls `compute_bucket(t)`:
+   - Atomically swaps the buffer (old list → new empty list)
+   - Splits samples into cached / uncached groups by URL path
+   - Separates successful requests (used for latency percentiles) from errors
+   - Computes p50 latency per group (nearest-rank method)
+   - Computes error percentage per group (errors ÷ total × 100)
+3. Returns a bucket dict matching the frontend's SSE contract:
+   ```json
+   {"t": 5, "cache": 2.3, "noCache": 45.1, "cachePct": 0.0, "noCachePct": 8.7}
+   ```
+
+### Tier 4: Persistence (Supabase)
+
+After a run completes, the aggregated buckets are saved to Supabase:
+
+- **runs** table — one row per simulation: run_id, config (JSON), status, created_at
+- **buckets** table — one row per second per run: run_id, t, cache_latency, no_cache_latency, cache_error_pct, no_cache_error_pct
+
+This is low-volume data (a 60-second run = 60 bucket rows), making it viable within Supabase's free tier.
+
+Supabase is **not** used as the target API's database — the target API uses local Docker PostgreSQL to avoid request costs during high-load simulations.
+
+## Engine State Machine
+
+```
+Pending → Running → Completed
+               ↘ Cancelled (client disconnect / error)
+```
+
+## SSE Contract (unchanged from mock)
+
+The frontend's `useSSE` hook expects events of this shape:
+
+```typescript
+{
+  t: number;         // second from start
+  cache: number;     // p50 latency in ms (cached requests)
+  noCache: number;   // p50 latency in ms (uncached requests)
+  cachePct: number;  // error % for cached requests
+  noCachePct: number; // error % for uncached requests
+  done?: boolean;    // present and true when run completes
+}
+```
+
+## API Routes
 
 | Endpoint | Method | What it does |
 |---|---|---|
 | `/api/runs` | POST | Create and start a new simulation run |
-| `/api/runs` | GET | List all past runs with summaries |
+| `/api/runs` | GET | List all past runs with summaries (from Supabase) |
 | `/api/runs/{id}` | GET | Get full details of a specific run |
-| `/api/runs/{id}/stream` | GET | SSE stream — pushes `MetricsBucket` as they arrive |
+| `/api/runs/{id}/stream` | GET | SSE stream — pushes real-time bucket data |
 | `/api/runs/{id}` | DELETE | Delete a run and its data |
-| `/api/scenarios` | GET | List available preset scenarios |
+| `/api/generate-config` | POST | AI-generated endpoint configuration (via DeepSeek) |
 
-### Frontend
+## Key Design Decisions
 
-The Next.js frontend has several panels:
-
-| Panel | Purpose |
-|---|---|
-| **Simulation Form** | Configure and launch a new run — target URL, concurrency, duration, ramp-up |
-| **Live Chart** | Real-time line chart — throughput (RPS) + p50/p95/p99 over time |
-| **Logs Panel** | Scrollable log of events — run started, VU spawned, errors, run completed |
-| **Run History** | Sidebar list of past runs — click to load, compare summaries |
-
-Communication with backend:
-- **REST**: Creating runs, fetching history, loading past run details
-- **SSE** (Server-Sent Events): Real-time metrics during an active run — simpler than WebSocket, one-directional, works through proxies
-
-## Frontend Tech
-
-- **Next.js** (App Router) — framework
-- **Recharts** — charting library for the live latency/throughput charts
-- **CSS grid** — 65/35 chart/sidebar split, config panel below
-- No state management library — React state + custom hooks are sufficient for MVP
+1. **Real HTTP requests, not mock math** — every metric comes from an actual network round-trip. The cache vs no-cache comparison is genuine because Redis and PostgreSQL are real services with real resource limits.
+2. **Target API in Docker, DataScalr on host** — the engine benefits from hot-reload during development. The infrastructure (PG, Redis, target API) is containerized for repeatability.
+3. **Supabase for DataScalr's data, local PG for load testing** — avoids unexpected cloud bills from high-volume database queries during simulations.
+4. **SSE over WebSocket** — one-directional (server → client), simpler, auto-reconnects, no library needed. The same contract works for both mock and real data.
+5. **Per-second bucketing** — aggregates raw request samples into 1-second buckets. Keeps storage lean (a 5-minute run = 300 buckets) while preserving percentile accuracy.
+6. **In-process engine** — VUs run as asyncio tasks inside the FastAPI process. Ceiling ~5k VUs on consumer hardware.
 
 ## Directory Layout
 
 ```
 datascalr/
+├── docker-compose.yml
+├── target-api/
+│   ├── app.py
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   └── init.sql
 ├── backend/
 │   ├── app/
-│   │   ├── __init__.py
-│   │   ├── main.py              # FastAPI app, lifespan, CORS
+│   │   ├── main.py
+│   │   ├── db.py                    # Supabase client
 │   │   ├── routes/
-│   │   │   ├── __init__.py
-│   │   │   ├── runs.py          # /api/runs endpoints
-│   │   │   └── scenarios.py     # /api/scenarios endpoints
+│   │   │   ├── runs.py
+│   │   │   ├── stream.py
+│   │   │   └── generate.py
 │   │   ├── schemas/
-│   │   │   ├── __init__.py
-│   │   │   ├── run.py           # RunConfig, RunStatus, RunResult
-│   │   │   └── metrics.py       # MetricsBucket, RunSummary
 │   │   ├── engine/
-│   │   │   ├── __init__.py
-│   │   │   ├── runner.py        # Orchestrates a simulation run
-│   │   │   └── virtual_user.py  # A single VU coroutine
-│   │   ├── metrics/
-│   │   │   ├── __init__.py
-│   │   │   ├── collector.py     # Receives raw samples, computes buckets
-│   │   │   └── store.py         # In-memory + SQLite storage
-│   │   └── db.py                # SQLite setup, migrations
+│   │   │   ├── runner.py            # VU orchestrator
+│   │   │   ├── virtual_user.py      # Single VU httpx loop
+│   │   │   └── utils.py             # Think time, endpoint picker
+│   │   └── metrics/
+│   │       ├── collector.py         # Sample → bucket aggregation
+│   │       └── store.py             # Supabase persistence
 │   ├── requirements.txt
 │   └── .env
 ├── frontend/
-│   ├── src/
-│   │   ├── app/
-│   │   │   ├── page.tsx         # Main simulation page
-│   │   │   ├── layout.tsx
-│   │   │   └── globals.css
-│   │   ├── components/
-│   │   │   ├── SimulationForm.tsx
-│   │   │   ├── LiveChart.tsx
-│   │   │   ├── LiveLogs.tsx     # Real-time log panel
-│   │   │   └── RunHistory.tsx
-│   │   └── lib/
-│   │       └── api.ts           # Fetch wrapper + SSE client
-│   └── ...
-├── docs/
-│   ├── 001-what-is-scale-simulation.md
-│   └── 002-architecture-overview.md
-├── CLAUDE.md
-└── package.json
+└── docs/
 ```
-
-## Key Design Decisions
-
-1. **SSE over WebSocket** — real-time is one-directional (server → client). SSE is simpler, works through proxies, auto-reconnects, no library needed.
-2. **SQLite for persistence** — zero setup, survives restarts, enables post-run data analysis. Abstracted behind an interface for future swap to Postgres.
-3. **Per-second bucketing** — each second's metrics are aggregated from raw samples. Keeps storage lean (a 5-minute run = 300 buckets) while preserving percentile accuracy.
-4. **In-process engine** — virtual users run as asyncio tasks inside the FastAPI process. Ceiling ~5k VUs on consumer hardware. A separate worker process (via Locust or Celery) is a future upgrade path.
-5. **Ramp-up** — VUs start staggered over the ramp-up period so you can observe the system's behavior as traffic grows, not just at full load.
-
-## Noteworthy for Future Phases
-
-- **Logs panel** — along with the real-time chart, a live log panel shows run events (VU spawned, request failed, run completed) for debugging and observability.
-- **Scenario presets** — common patterns pre-configured (e.g., "gentle ramp", "burst", "sustained load") so you can run quickly without setting every parameter.
-- **Run comparison** — overlay metrics from two runs on the same chart to compare before/after a change.
