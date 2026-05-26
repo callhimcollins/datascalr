@@ -122,7 +122,7 @@
 /* ── Base body ── */
 body {
   font-family: var(--font-geist-sans);
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition: color 0.15s ease;
 }
 
 /* Hero glow — bleeds behind cards so backdrop-filter has something to blur */

@@ -35,3 +35,5 @@ async def run_engine(
                 await asyncio.sleep(ramp_up / max_vus)
 
         await stop_event.wait()
+
+

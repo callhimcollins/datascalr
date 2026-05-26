@@ -38,16 +38,19 @@ async def virtual_user_loop(
         status_code = 0
 
         try:
-            resp = await client.request(
-                method=endpoint["method"],
-                url=url,
-                json=body,
+            resp = await asyncio.wait_for(
+                client.request(
+                    method=endpoint["method"],
+                    url=url,
+                    json=body,
+                    timeout=10.0,
+                ),
                 timeout=10.0,
             )
             status_code = resp.status_code
             if status_code >= 400:
                 error = f"http_{status_code}"
-        except httpx.TimeoutException:
+        except (httpx.TimeoutException, asyncio.TimeoutError):
             error = "timeout"
         except httpx.RequestError as e:
             error = f"connection_error: {type(e).__name__}"

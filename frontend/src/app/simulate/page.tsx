@@ -1,8 +1,8 @@
 "use client";
 
 import { API_BASE } from "@/lib/api";
-import { useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RunningView } from "@/components/RunningView";
 import { useSim } from "@/lib/simulation-context";
 import { useSSE } from "@/lib/use-sse";
@@ -20,10 +20,34 @@ function SimulateInner() {
   const [runKey, setRunKey] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const [progress, setProgress] = useState(0);
+  const [autoComplete, setAutoComplete] = useState(false);
   const startedAtRef = useRef<number | null>(null);
 
   const sseUrl = runId ? `${API_BASE}/api/runs/${runId}/stream` : null;
-  const { data: latencyHistory, isComplete, comparison } = useSSE(sseUrl);
+  const { data: latencyHistory, isComplete: sseComplete, comparison: sseComparison } = useSSE(sseUrl);
+  const isComplete = sseComplete || autoComplete;
+
+  // Fallback comparison from local data when SSE dropped before done message
+  const comparison = useMemo(() => {
+    if (sseComparison) return sseComparison;
+    if (!autoComplete || latencyHistory.length < 3) return null;
+    const n = Number(rampUp);
+    const steadyStart = Math.max(n + 1, 1);
+    const steady = latencyHistory.filter((d) => d.t >= steadyStart);
+    const cacheVals = steady.map((d) => d.cacheHit).filter((v): v is number => v != null);
+    const noCacheVals = steady.map((d) => d.noCache).filter((v): v is number => v != null);
+    if (cacheVals.length === 0 || noCacheVals.length === 0) return null;
+    const avgC = cacheVals.reduce((a, b) => a + b, 0) / cacheVals.length;
+    const avgN = noCacheVals.reduce((a, b) => a + b, 0) / noCacheVals.length;
+    const diff = avgN - avgC;
+    return {
+      cache_ms: Math.round(avgC * 10) / 10,
+      no_cache_ms: Math.round(avgN * 10) / 10,
+      difference_ms: Math.round(Math.abs(diff) * 10) / 10,
+      percentage_faster: Math.round((Math.abs(diff) / Math.max(avgN, 1)) * 100 * 10) / 10,
+      winner: (diff > 1 ? "cache" : diff < -1 ? "no_cache" : "tie") as "cache" | "no_cache" | "tie",
+    };
+  }, [sseComparison, autoComplete, latencyHistory, rampUp]);
 
   // Start a simulation run
   const startRun = useCallback(async () => {
@@ -51,6 +75,7 @@ function SimulateInner() {
 
       const data = await res.json();
       setRunId(data.run_id);
+      setAutoComplete(false);
       setElapsed(0);
       setProgress(0);
       startedAtRef.current = Date.now();
@@ -72,12 +97,14 @@ function SimulateInner() {
     setElapsed(0);
     setProgress(0);
     setError(null);
+    setAutoComplete(false);
   }, []);
 
+  const router = useRouter();
   const handleConfigure = useCallback(() => {
     const qs = new URLSearchParams({ platform, concurrency, rampUp, duration });
-    window.location.href = `/configure?${qs.toString()}`;
-  }, [platform, concurrency, rampUp, duration]);
+    router.push(`/configure?${qs.toString()}`);
+  }, [router, platform, concurrency, rampUp, duration]);
 
   // Timer management
   useEffect(() => {
@@ -104,10 +131,16 @@ function SimulateInner() {
       setProgress(100);
     }, Number(duration) * 1000);
 
+    // Fallback: if SSE hasn't sent done by duration + 10s, auto-complete
+    const fallbackTimeout = setTimeout(() => {
+      setAutoComplete(true);
+    }, (Number(duration) + 10) * 1000);
+
     return () => {
       clearInterval(timer);
       clearInterval(smoothProgress);
       clearTimeout(endTimeout);
+      clearTimeout(fallbackTimeout);
     };
   }, [runId, duration]);
 
