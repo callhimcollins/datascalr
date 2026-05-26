@@ -1,7 +1,7 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { Suspense, useState, useCallback } from "react";
+import { Suspense, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BackButton } from "@/components/BackButton";
 import { Card, CardContent } from "@/components/ui/card";
@@ -9,74 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { useSim, type FullConfig, type EndpointConfig } from "@/lib/simulation-context";
-
-const methodColors: Record<string, string> = {
-  GET: "text-green-500",
-  POST: "text-blue-400",
-  PUT: "text-orange-400",
-  PATCH: "text-yellow-400",
-  DELETE: "text-red-400",
-};
-
-function WeightSlider({
-  ep,
-  value,
-  onChange,
-}: {
-  ep: EndpointConfig;
-  value: number;
-  onChange: (newVal: number) => void;
-}) {
-  const [hovered, setHovered] = useState(false);
-
-  return (
-    <div className="glass-card rounded-lg px-4 py-3 flex items-center gap-3">
-      <span
-        className={`text-xs font-bold font-mono w-14 shrink-0 ${methodColors[ep.method] ?? "text-zinc-400"}`}
-      >
-        {ep.method}
-      </span>
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-mono text-zinc-900 dark:text-zinc-200 truncate">
-          {ep.path}
-        </p>
-        <p className="text-xs text-zinc-500 dark:text-zinc-400 truncate">
-          {ep.description}
-        </p>
-      </div>
-      <div
-        className="relative w-24 h-5 shrink-0"
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-      >
-        <div className="absolute inset-0 top-1/2 -translate-y-1/2 h-1 rounded-full bg-zinc-200 dark:bg-zinc-700 overflow-hidden pointer-events-none">
-          <div
-            className="h-full rounded-full bg-amber-500"
-            style={{ width: `${value}%` }}
-          />
-        </div>
-        {hovered && (
-          <div
-            className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-2.5 h-2.5 rounded-full bg-amber-600 z-20 pointer-events-none"
-            style={{ left: `${value}%` }}
-          />
-        )}
-        <input
-          type="range"
-          min={0}
-          max={100}
-          value={value}
-          onChange={(e) => onChange(Number(e.currentTarget.value))}
-          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-        />
-      </div>
-      <div className="shrink-0 text-right w-6">
-        <div className="text-xs tabular-nums text-zinc-400">{value}%</div>
-      </div>
-    </div>
-  );
-}
+import { API_BASE } from "@/lib/api";
+import { useSim, type FullConfig } from "@/lib/simulation-context";
 
 function StepIndicator({ step }: { step: number }) {
   return (
@@ -97,7 +31,7 @@ function ConfigureInner() {
   const [generatedConfig, setGeneratedConfig] = useState<FullConfig | null>(null);
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
-  const [weights, setWeights] = useState<number[]>([]);
+  const [selectedProfile, setSelectedProfile] = useState<number | null>(null);
 
   const [form, setForm] = useState({
     platform: params.get("platform") ?? "",
@@ -125,7 +59,7 @@ function ConfigureInner() {
     setGenError(null);
 
     try {
-      const res = await fetch("http://localhost:8000/api/generate-config", {
+      const res = await fetch(`${API_BASE}/api/generate-config`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -143,24 +77,7 @@ function ConfigureInner() {
 
       const data: FullConfig = await res.json();
       setGeneratedConfig(data);
-      // Normalize initial weights to sum to 100
-      const raw = data.endpoints.map((ep) => ep.weight);
-      const total = raw.reduce((s, v) => s + v, 0) || 1;
-      const normalized = raw.map((w) => Math.round((w / total) * 100));
-      // Fix rounding to ensure exactly 100
-      const sum = normalized.reduce((s, v) => s + v, 0);
-      if (sum !== 100 && normalized.length > 0) {
-        normalized[normalized.length - 1] += 100 - sum;
-      }
-      setWeights(normalized);
-      setSim({
-        baseUrl: data.base_url,
-        endpoints: data.endpoints.map((ep, i) => ({
-          method: ep.method,
-          path: ep.path,
-          weight: normalized[i],
-        })),
-      });
+      setSelectedProfile(null);
       setStep(2);
     } catch (err) {
       setGenError(err instanceof Error ? err.message : String(err));
@@ -169,14 +86,23 @@ function ConfigureInner() {
     }
   }
 
+  function handleProfileSelect(index: number) {
+    setSelectedProfile(index);
+  }
+
   function handleSimulate() {
-    if (!generatedConfig) return;
-    const adjusted = generatedConfig.endpoints.map((ep, i) => ({
-      method: ep.method,
-      path: ep.path,
-      weight: weights[i] ?? 0,
-    }));
-    setSim({ baseUrl: generatedConfig.base_url, endpoints: adjusted });
+    if (!generatedConfig || selectedProfile === null) return;
+    const profile = generatedConfig.profiles[selectedProfile];
+    if (!profile) return;
+
+    setSim({
+      baseUrl: generatedConfig.base_url,
+      endpoints: profile.endpoints.map((ep) => ({
+        method: ep.method,
+        path: ep.path,
+        weight: ep.weight,
+      })),
+    });
 
     const qs = new URLSearchParams({
       platform: form.platform,
@@ -186,48 +112,6 @@ function ConfigureInner() {
     });
     router.push(`/simulate?${qs.toString()}`);
   }
-
-  const handleWeightChange = useCallback((changedIndex: number, newVal: number) => {
-    setWeights((prev) => {
-      const n = prev.length;
-      if (n <= 1) return prev;
-
-      newVal = Math.max(0, Math.min(100, Math.round(newVal)));
-      const result = [...prev];
-      result[changedIndex] = newVal;
-
-      const remaining = 100 - newVal;
-      const otherSum = prev.reduce((s, v, i) => s + (i !== changedIndex ? v : 0), 0);
-
-      if (otherSum === 0) {
-        // All others were 0 — split remaining evenly
-        const share = Math.floor(remaining / (n - 1));
-        for (let i = 0; i < n; i++) {
-          if (i !== changedIndex) result[i] = share;
-        }
-      } else {
-        let allocated = 0;
-        for (let i = 0; i < n; i++) {
-          if (i === changedIndex) continue;
-          const r = Math.round((prev[i] / otherSum) * remaining);
-          result[i] = r;
-          allocated += r;
-        }
-        // Fix rounding so we hit exactly 100
-        const diff = remaining - allocated;
-        if (diff !== 0) {
-          for (let i = 0; i < n; i++) {
-            if (i !== changedIndex && result[i] + diff >= 0) {
-              result[i] += diff;
-              break;
-            }
-          }
-        }
-      }
-
-      return result;
-    });
-  }, []);
 
   return (
     <main className="flex flex-1 flex-col items-center px-6 py-16">
@@ -326,24 +210,12 @@ function ConfigureInner() {
           </>
         )}
 
-        {/* ── Step 2: Weight Distribution ── */}
+        {/* ── Step 2: Profile Picker ── */}
         {step === 2 && generatedConfig && (
           <div className="space-y-6">
             <p className="text-sm font-semibold text-muted-foreground">
-              Review the traffic distribution before simulating.
+              Choose a traffic profile for your simulation.
             </p>
-
-            {/* Base URL */}
-            {generatedConfig.base_url && (
-              <div className="glass-card rounded-lg px-4 py-3">
-                <span className="text-xs font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide">
-                  Target
-                </span>
-                <p className="mt-0.5 text-sm font-mono text-zinc-900 dark:text-zinc-200">
-                  {generatedConfig.base_url}
-                </p>
-              </div>
-            )}
 
             {/* Run params summary */}
             <div className="grid grid-cols-3 gap-3">
@@ -373,32 +245,80 @@ function ConfigureInner() {
               </div>
             </div>
 
-            {/* Endpoints / weight distribution */}
-            <div className="space-y-2">
-              <span className="text-xs font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-wide">
-                Request Distribution
-              </span>
-              <div className="text-[11px] text-zinc-500 dark:text-zinc-400 text-right -mt-1 mb-1">
-                Total: {weights.reduce((s, v) => s + v, 0)}%
+            {/* Profile cards */}
+            <div className="space-y-3">
+              {generatedConfig.profiles?.length > 0 ? (
+                generatedConfig.profiles.map((profile, i) => {
+                  const isSelected = selectedProfile === i;
+                  return (
+                  <button
+                    key={i}
+                    onClick={() => handleProfileSelect(i)}
+                    className={`w-full text-left glass-card rounded-lg px-5 py-4 transition-colors cursor-pointer border focus-visible:outline-none ${
+                      isSelected
+                        ? "border-amber-500 bg-amber-50 dark:bg-amber-950/20"
+                        : "border-transparent hover:bg-zinc-100 dark:hover:bg-zinc-800/60 hover:border-amber-500/40 focus-visible:border-amber-500"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-bold text-zinc-900 dark:text-zinc-50">
+                          {profile.label}
+                        </p>
+                        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
+                          {profile.description}
+                        </p>
+                      </div>
+                      <span className={`shrink-0 text-xs font-medium mt-0.5 ${isSelected ? "text-amber-600 dark:text-amber-400" : "text-zinc-400 dark:text-zinc-500"}`}>
+                        {isSelected ? "Selected" : "Select"}
+                      </span>
+                    </div>
+
+                    {/* Endpoint weight bars */}
+                    <div className="mt-3 space-y-1.5">
+                      {profile.endpoints.map((ep, j) => {
+                        const pct = Math.round(ep.weight * 100);
+                        return (
+                          <div key={j} className="flex items-center gap-2 text-xs">
+                            <span className="w-16 shrink-0 font-mono text-zinc-500 dark:text-zinc-400">
+                              {ep.path.includes("cached=true") ? "Cached" : "Uncached"}
+                            </span>
+                            <div className="flex-1 h-2 rounded-full bg-zinc-200 dark:bg-zinc-700 overflow-hidden">
+                              <div
+                                className={`h-full rounded-full ${ep.path.includes("cached=true") ? "bg-amber-500" : "bg-blue-500"}`}
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                            <span className="w-8 shrink-0 text-right font-mono text-zinc-600 dark:text-zinc-300">
+                              {pct}%
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </button>
+                );
+              })
+            ) : (
+              <div className="rounded-lg border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950 px-4 py-4 text-sm text-red-700 dark:text-red-300">
+                <p className="font-semibold">No profiles returned</p>
+                <p className="mt-1">
+                  The config generator returned an unexpected response. Try going back and describing your API again, or restart the backend server.
+                </p>
               </div>
-              {generatedConfig.endpoints.map((ep, i) => (
-                <WeightSlider
-                  key={i}
-                  ep={ep}
-                  value={weights[i] ?? 0}
-                  onChange={(v) => handleWeightChange(i, v)}
-                />
-              ))}
+            )}
             </div>
 
             {/* Simulate button */}
-            <Button
-              onClick={handleSimulate}
-              className="!mt-8 w-full cursor-pointer bg-gradient-to-r from-amber-600 to-orange-600 text-white hover:from-amber-500 hover:to-orange-500 shadow-sm hover:shadow-md hover:shadow-amber-600/20 transition-all"
-              size="lg"
-            >
-              Simulate
-            </Button>
+            {selectedProfile !== null && (
+              <Button
+                onClick={handleSimulate}
+                className="!mt-2 w-full cursor-pointer bg-gradient-to-r from-amber-600 to-orange-600 text-white hover:from-amber-500 hover:to-orange-500 shadow-sm hover:shadow-md hover:shadow-amber-600/20 transition-all"
+                size="lg"
+              >
+                Simulate
+              </Button>
+            )}
 
             {/* Back to edit */}
             <button

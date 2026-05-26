@@ -18,7 +18,8 @@ export type LogEvent = {
 
 export type LatencyPoint = {
   t: number;
-  cache: number | null;
+  cacheHit: number | null;
+  cacheMissRate: number | null;
   noCache: number | null;
   cachePct: number | null;
   noCachePct: number | null;
@@ -29,19 +30,23 @@ export type LatencyPoint = {
   events?: LogEvent[];
 };
 
+function fmt_ms(v: number): string {
+  return v < 1 ? `${v.toFixed(2)} ms` : `${v.toFixed(1)} ms`;
+}
+
 function CustomTooltip({ active, payload, label }: Record<string, unknown>) {
   if (!active || !payload || !Array.isArray(payload) || payload.length === 0) return null;
   const row = payload[0]?.payload ?? {};
   return (
-    <div className="rounded-lg border border-zinc-600/35 bg-[rgba(24,24,27,0.9)] px-3 py-2 text-xs text-zinc-100 shadow-lg">
+    <div className="rounded-lg border border-zinc-600/30 bg-[rgba(24,24,27,0.6)] backdrop-blur-xl px-3 py-2 text-xs text-zinc-100 shadow-lg">
       <p className="mb-1.5 font-medium text-zinc-400">@ {String(label)}s</p>
       <div className="space-y-1">
         <div className="flex items-center gap-2">
           <span className="h-2 w-2 rounded-sm bg-green-500/70" />
-          <span className="text-zinc-300">Cache</span>
+          <span className="text-zinc-300">Cache Hit</span>
           <span className="ml-auto tabular-nums">
-            {row.cache !== null && row.cache !== undefined
-              ? `${Number(row.cache).toFixed(1)} ms`
+            {row.cacheHit !== null && row.cacheHit !== undefined
+              ? fmt_ms(Number(row.cacheHit))
               : "—"}
           </span>
           <span className="text-zinc-500">
@@ -53,13 +58,22 @@ function CustomTooltip({ active, payload, label }: Record<string, unknown>) {
           <span className="text-zinc-300">No Cache</span>
           <span className="ml-auto tabular-nums">
             {row.noCache !== null && row.noCache !== undefined
-              ? `${Number(row.noCache).toFixed(1)} ms`
+              ? fmt_ms(Number(row.noCache))
               : "—"}
           </span>
           <span className="text-zinc-500">
             {row.noCacheRps !== undefined ? `${row.noCacheRps}/s` : ""}
           </span>
         </div>
+        {row.cacheMissRate !== null && row.cacheMissRate !== undefined ? (
+          <div className="flex items-center gap-2">
+            <span className="h-2 w-2 rounded-sm bg-amber-500/70" />
+            <span className="text-zinc-300">Miss Rate</span>
+            <span className="ml-auto tabular-nums">
+              {Number(row.cacheMissRate).toFixed(1)}%
+            </span>
+          </div>
+        ) : null}
         {(row.cachePct !== null && row.cachePct !== undefined) ||
         (row.noCachePct !== null && row.noCachePct !== undefined) ? (
           <div className="border-t border-zinc-700/50 pt-1 mt-1">
@@ -81,13 +95,18 @@ function CustomTooltip({ active, payload, label }: Record<string, unknown>) {
 }
 
 export function LatencyChart({ data }: { data: LatencyPoint[] }) {
-  const avgCache = useMemo(() => {
-    const vals = data.map((d) => d.cache).filter((v): v is number => v !== null && v !== undefined);
+  const avgCacheHit = useMemo(() => {
+    const vals = data.map((d) => d.cacheHit).filter((v): v is number => v !== null && v !== undefined);
     return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
   }, [data]);
 
   const avgNoCache = useMemo(() => {
     const vals = data.map((d) => d.noCache).filter((v): v is number => v !== null && v !== undefined);
+    return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+  }, [data]);
+
+  const avgMissRate = useMemo(() => {
+    const vals = data.map((d) => d.cacheMissRate).filter((v): v is number => v !== null && v !== undefined);
     return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
   }, [data]);
 
@@ -132,7 +151,7 @@ export function LatencyChart({ data }: { data: LatencyPoint[] }) {
               width={64}
               domain={[0, 100]}
               tickFormatter={(v: number) => `${v}%`}
-              label={{ value: "errors", angle: 90, position: "insideRight", offset: 6, style: { fontSize: 10, fill: "#a1a1aa", fontWeight: 600 } }}
+              label={{ value: "%", angle: 90, position: "insideRight", offset: 6, style: { fontSize: 10, fill: "#a1a1aa", fontWeight: 600 } }}
             />
             <Tooltip content={<CustomTooltip />} />
             <Area
@@ -148,12 +167,24 @@ export function LatencyChart({ data }: { data: LatencyPoint[] }) {
             />
             <Area
               type="monotone"
-              dataKey="cache"
-              name="Cache"
+              dataKey="cacheHit"
+              name="Cache Hit"
               stroke="#22c55e"
               fill="#22c55e"
               fillOpacity={0.25}
               strokeWidth={1.5}
+              dot={false}
+              isAnimationActive={false}
+            />
+            <Area
+              yAxisId="error"
+              type="monotone"
+              dataKey="cacheMissRate"
+              name="Miss Rate"
+              stroke="#f59e0b"
+              strokeWidth={1.5}
+              strokeDasharray="4 3"
+              fill="none"
               dot={false}
               isAnimationActive={false}
             />
@@ -187,17 +218,22 @@ export function LatencyChart({ data }: { data: LatencyPoint[] }) {
       <div className="shrink-0 flex items-center justify-center gap-6 pt-2 pb-1 text-xs border-t border-zinc-700/30 mt-1">
         <span className="flex items-center gap-1.5">
           <span className="h-2 w-2 rounded-sm bg-green-500/60" />
-          <span className="text-zinc-400">Cache:</span>
-          <span className="font-mono tabular-nums text-green-400">{avgCache.toFixed(1)} ms</span>
+          <span className="text-zinc-400">Hit:</span>
+          <span className="font-mono tabular-nums text-green-400">{fmt_ms(avgCacheHit)}</span>
           <span className="text-zinc-500">·</span>
-          <span className="font-mono tabular-nums text-zinc-400">{avgCacheRps} rps</span>
+          <span className="font-mono tabular-nums text-zinc-400">{avgCacheRps > 0 ? `${avgCacheRps} rps` : "— rps"}</span>
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="h-2 w-2 rounded-sm bg-amber-500/60" />
+          <span className="text-zinc-400">Miss rate:</span>
+          <span className="font-mono tabular-nums text-amber-400">{avgMissRate.toFixed(1)}%</span>
         </span>
         <span className="flex items-center gap-1.5">
           <span className="h-2 w-2 rounded-sm bg-red-500/60" />
           <span className="text-zinc-400">No Cache:</span>
-          <span className="font-mono tabular-nums text-red-400">{avgNoCache.toFixed(1)} ms</span>
+          <span className="font-mono tabular-nums text-red-400">{fmt_ms(avgNoCache)}</span>
           <span className="text-zinc-500">·</span>
-          <span className="font-mono tabular-nums text-zinc-400">{avgNoCacheRps} rps</span>
+          <span className="font-mono tabular-nums text-zinc-400">{avgNoCacheRps > 0 ? `${avgNoCacheRps} rps` : "— rps"}</span>
         </span>
       </div>
     </div>

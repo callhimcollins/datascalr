@@ -129,7 +129,11 @@ export function RunningView({
             </span>
             <span className="flex items-center gap-1.5 text-[11px]">
               <span className="h-2.5 w-2.5 rounded-sm bg-green-500/60" />
-              <span className="text-zinc-400">Cache</span>
+              <span className="text-zinc-400">Cache Hit</span>
+            </span>
+            <span className="flex items-center gap-1.5 text-[11px]">
+              <span className="h-px w-3 border-b border-dashed border-amber-500" />
+              <span className="text-zinc-400">Miss Rate</span>
             </span>
             <span className="flex items-center gap-1.5 text-[11px]">
               <span className="h-2.5 w-2.5 rounded-sm bg-red-500/60" />

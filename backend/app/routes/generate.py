@@ -4,13 +4,13 @@ import os
 import httpx
 from fastapi import APIRouter, HTTPException
 
-from ..schemas import EndpointConfig, GenerateConfigRequest, GenerateConfigResponse
+from ..schemas import GenerateConfigRequest, GenerateConfigResponse, Profile
 
 router = APIRouter()
 
 SYSTEM_PROMPT = """You are a configuration generator for a load-testing platform called DataScalr.
 
-The user describes a platform or API in natural language. You MUST generate a load-test config that targets our reference API at `http://localhost:8001`.
+The user describes a platform or API in natural language. You MUST generate 3 load-test profile options targeting our reference API at `http://localhost:8001`.
 
 This reference API has 3 endpoints that each accept `?cached=true/false`:
 1. `GET /api/items?cached=` — List items (simple PG query, ~10ms uncached)
@@ -20,57 +20,42 @@ This reference API has 3 endpoints that each accept `?cached=true/false`:
 Return ONLY valid JSON with this structure:
 {
   "base_url": "http://localhost:8001",
-  "endpoints": [
+  "profiles": [
     {
-      "method": "GET",
-      "path": "/api/items/search?q=:term&cached=true",
-      "description": "Search items with Redis caching",
-      "weight": 0.25
-    },
-    {
-      "method": "GET",
-      "path": "/api/items/search?q=:term&cached=false",
-      "description": "Search items directly from PostgreSQL",
-      "weight": 0.15
-    },
-    {
-      "method": "GET",
-      "path": "/api/items?cached=true",
-      "description": "List items with Redis caching",
-      "weight": 0.25
-    },
-    {
-      "method": "GET",
-      "path": "/api/items?cached=false",
-      "description": "List items directly from PostgreSQL",
-      "weight": 0.15
-    },
-    {
-      "method": "GET",
-      "path": "/api/items/stats?cached=true",
-      "description": "Category stats with Redis caching",
-      "weight": 0.15
-    },
-    {
-      "method": "GET",
-      "path": "/api/items/stats?cached=false",
-      "description": "Category stats directly from PostgreSQL",
-      "weight": 0.05
+      "label": "Feed reads",
+      "description": "Simulates scrolling through a timeline with frequent cached reads and occasional fresh fetches. Best for social/feed APIs.",
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/api/items?cached=true",
+          "description": "List items via Redis cache for fast timeline renders",
+          "weight": 0.8
+        },
+        {
+          "method": "GET",
+          "path": "/api/items?cached=false",
+          "description": "List items directly from PostgreSQL for hard refresh",
+          "weight": 0.2
+        }
+      ]
     }
   ]
 }
 
 Rules:
 - `base_url` MUST be `http://localhost:8001`. Never change this.
-- Generate endpoints for ALL 3 paths (items, search, stats), each with a cached and uncached variant. Total of 6 endpoints.
+- Generate exactly 3 profiles. Each profile must target a DIFFERENT primary path (items, search, or stats — assign one per profile).
+- Each profile has exactly 2 endpoints: one cached variant and one uncached variant of the SAME path.
 - The `:term` in search paths is a placeholder — the engine replaces it with random keywords.
-- The user's platform description determines the WEIGHT distribution:
-  - Real-time / social / chat / feed: heavier on cached search (feed reading habits) and cached list
-  - Ecommerce / marketplace: balanced across all 3, with more uncached stats (inventory checks)
-  - Analytics / dashboard / reporting: heavy on stats (both cached and uncached), lighter on search
-  - API gateway / microservice / backend: evenly distributed, more cached than uncached
-- Weights across all 6 endpoints MUST sum to 1.0.
-- Update each `description` field to reflect why the weight fits the user's platform.
+- The user's platform description determines the WEIGHT distribution within each profile:
+  - Real-time / social / chat / feed: heavier on cached (70-90%), lighter on uncached
+  - Ecommerce / marketplace: balanced (50-70% cached)
+  - Analytics / dashboard / reporting: moderate cache (60-80% cached)
+  - API gateway / microservice / backend: evenly distributed
+  - Adjust weights based on the user's specific description.
+- Weights within each profile MUST sum to 1.0.
+- Write a descriptive `label` (2-4 words) and `description` (1-2 sentences) for each profile that explains what it simulates and why it fits.
+- Update each endpoint `description` to explain why the weight fits the user's platform context.
 - Do NOT include `body_template` — these are all GET requests.
 - Do not include markdown code fences or any text outside the JSON."""
 
@@ -116,12 +101,12 @@ async def generate_config(req: GenerateConfigRequest):
             text = body["choices"][0]["message"]["content"].strip()
 
         data = json.loads(text)
-        if not isinstance(data.get("endpoints"), list):
-            raise ValueError("missing endpoints array")
+        if not isinstance(data.get("profiles"), list):
+            raise ValueError("missing profiles array")
 
         return GenerateConfigResponse(
             base_url=data["base_url"],
-            endpoints=[EndpointConfig(**ep) for ep in data["endpoints"]],
+            profiles=[Profile(**p) for p in data["profiles"]],
         )
 
     except json.JSONDecodeError:

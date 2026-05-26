@@ -13,17 +13,22 @@ type SimState = {
   endpoints: SimEndpoint[];
 };
 
-export type EndpointConfig = {
+export type ProfileEndpoint = {
   method: string;
   path: string;
   description: string;
   weight: number;
-  body_template: Record<string, unknown> | null;
+};
+
+export type Profile = {
+  label: string;
+  description: string;
+  endpoints: ProfileEndpoint[];
 };
 
 export type FullConfig = {
   base_url: string;
-  endpoints: EndpointConfig[];
+  profiles: Profile[];
 };
 
 const SimContext = createContext<{

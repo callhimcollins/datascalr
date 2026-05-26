@@ -21,13 +21,13 @@ def _save_run(run_id: str, run: dict) -> None:
     metrics = run.get("metrics", [])
     config = run.get("config", {})
 
-    cache_vals = [m["cache"] for m in metrics if m.get("cache") is not None]
+    cache_vals = [m["cacheHit"] for m in metrics if m.get("cacheHit") is not None]
     no_cache_vals = [m["noCache"] for m in metrics if m.get("noCache") is not None]
 
     # Compute steady-state averages (skip ramp-up period)
     ramp_up = config.get("ramp_up", 0)
     steady_state_start = max(ramp_up + 1, 1)
-    cache_steady = [m["cache"] for m in metrics[steady_state_start:] if m.get("cache") is not None]
+    cache_steady = [m["cacheHit"] for m in metrics[steady_state_start:] if m.get("cacheHit") is not None]
     no_cache_steady = [m["noCache"] for m in metrics[steady_state_start:] if m.get("noCache") is not None]
 
     avg_cache = round(sum(cache_vals) / len(cache_vals), 1) if cache_vals else 0.0
@@ -59,10 +59,12 @@ def _save_run(run_id: str, run: dict) -> None:
         "metrics": metrics,
     }
 
+    import datetime
     SAVE_DIR.mkdir(exist_ok=True)
     safe = f"{str(config.get('platform', ''))[:20]}_{config.get('concurrency', '?')}u_{config.get('duration', '?')}s"
     safe = "".join(c if c.isalnum() or c in "_-" else "_" for c in safe)
-    path = SAVE_DIR / f"{run_id}_{safe}.json"
+    ts = datetime.datetime.now().strftime("%I_%M%p").lower()
+    path = SAVE_DIR / f"{run_id}_{ts}_{safe}.json"
     path.write_text(json.dumps(data, indent=2))
 
 
@@ -120,12 +122,12 @@ async def stream_run(run_id: str, request: Request):
             _save_run(run_id, run)
             
             # Send final summary with comparison
-            cache_vals = [m["cache"] for m in run["metrics"] if m.get("cache") is not None]
+            cache_vals = [m["cacheHit"] for m in run["metrics"] if m.get("cacheHit") is not None]
             no_cache_vals = [m["noCache"] for m in run["metrics"] if m.get("noCache") is not None]
             
             ramp_up = config.get("ramp_up", 0)
             steady_state_start = max(ramp_up + 1, 1)
-            cache_steady = [m["cache"] for m in run["metrics"][steady_state_start:] if m.get("cache") is not None]
+            cache_steady = [m["cacheHit"] for m in run["metrics"][steady_state_start:] if m.get("cacheHit") is not None]
             no_cache_steady = [m["noCache"] for m in run["metrics"][steady_state_start:] if m.get("noCache") is not None]
             
             avg_cache_steady = round(sum(cache_steady) / len(cache_steady), 1) if cache_steady else 0.0

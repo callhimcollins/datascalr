@@ -1,5 +1,6 @@
 "use client";
 
+import { API_BASE } from "@/lib/api";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { RunningView } from "@/components/RunningView";
@@ -16,11 +17,12 @@ function SimulateInner() {
   const { sim } = useSim();
   const [error, setError] = useState<string | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
+  const [runKey, setRunKey] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const [progress, setProgress] = useState(0);
   const startedAtRef = useRef<number | null>(null);
 
-  const sseUrl = runId ? `http://localhost:8000/api/runs/${runId}/stream` : null;
+  const sseUrl = runId ? `${API_BASE}/api/runs/${runId}/stream` : null;
   const { data: latencyHistory, isComplete, comparison } = useSSE(sseUrl);
 
   // Start a simulation run
@@ -29,7 +31,7 @@ function SimulateInner() {
 
     setError(null);
     try {
-      const res = await fetch("http://localhost:8000/api/runs", {
+      const res = await fetch(`${API_BASE}/api/runs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -57,15 +59,19 @@ function SimulateInner() {
     }
   }, [sim, concurrency, rampUp, duration, platform]);
 
-  // Start immediately on mount
+  // Start on mount and on retry
   useEffect(() => {
     if (sim) {
       startRun();
     }
-  }, [sim, startRun]);
+  }, [sim, startRun, runKey]);
 
   const handleRunAgain = useCallback(() => {
-    window.location.reload();
+    setRunId(null);
+    setRunKey((k) => k + 1);
+    setElapsed(0);
+    setProgress(0);
+    setError(null);
   }, []);
 
   const handleConfigure = useCallback(() => {

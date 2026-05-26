@@ -9,6 +9,7 @@ class Sample:
     latency_ms: float
     status_code: int
     cached: bool
+    cache_hit: bool | None = None
     error: str | None = None
 
 
@@ -35,18 +36,25 @@ class MetricsCollector:
         """Swap the sample buffer and compute aggregate stats for the window."""
         bucket, self._samples = self._samples, []
 
-        cached_ok = [s.latency_ms for s in bucket if s.cached and s.error is None]
-        uncached_ok = [s.latency_ms for s in bucket if not s.cached and s.error is None]
+        cached_ok = [s for s in bucket if s.cached and s.error is None]
+        uncached_ok = [s for s in bucket if not s.cached and s.error is None]
         cached_err = [s for s in bucket if s.cached and s.error is not None]
         uncached_err = [s for s in bucket if not s.cached and s.error is not None]
+
+        cache_hit_ok = [s.latency_ms for s in cached_ok if s.cache_hit is True]
+        cache_miss_ok = [s.latency_ms for s in cached_ok if s.cache_hit is False]
+        known_status = len(cache_hit_ok) + len(cache_miss_ok)
+
+        uncached_ok_ms = [s.latency_ms for s in uncached_ok]
 
         cached_total = len(cached_ok) + len(cached_err)
         uncached_total = len(uncached_ok) + len(uncached_err)
 
         return {
             "t": t,
-            "cache": round(_percentile(cached_ok, 50), 1) if cached_ok else None,
-            "noCache": round(_percentile(uncached_ok, 50), 1) if uncached_ok else None,
+            "cacheHit": round(_percentile(cache_hit_ok, 50), 2) if cache_hit_ok else None,
+            "cacheMissRate": round(len(cache_miss_ok) / known_status * 100, 1) if known_status > 0 else None,
+            "noCache": round(_percentile(uncached_ok_ms, 50), 2) if uncached_ok_ms else None,
             "cachePct": round(len(cached_err) / cached_total * 100, 1) if cached_total > 0 else None,
             "noCachePct": round(len(uncached_err) / uncached_total * 100, 1) if uncached_total > 0 else None,
             "cacheCount": len(cached_ok),
