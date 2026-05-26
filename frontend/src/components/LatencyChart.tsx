@@ -9,10 +9,12 @@ import {
   Tooltip,
   ResponsiveContainer,
   CartesianGrid,
+  ReferenceLine,
 } from "recharts";
 
 export type LogEvent = {
   level: "info" | "warn" | "error";
+  chart?: string;
   msg: string;
 };
 
@@ -65,36 +67,12 @@ function CustomTooltip({ active, payload, label }: Record<string, unknown>) {
             {row.noCacheRps !== undefined ? `${row.noCacheRps}/s` : ""}
           </span>
         </div>
-        {row.cacheMissRate !== null && row.cacheMissRate !== undefined ? (
-          <div className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-sm bg-amber-500/70" />
-            <span className="text-zinc-300">Miss Rate</span>
-            <span className="ml-auto tabular-nums">
-              {Number(row.cacheMissRate).toFixed(1)}%
-            </span>
-          </div>
-        ) : null}
-        {(row.cachePct !== null && row.cachePct !== undefined) ||
-        (row.noCachePct !== null && row.noCachePct !== undefined) ? (
-          <div className="border-t border-zinc-700/50 pt-1 mt-1">
-            {row.cachePct !== null && row.cachePct !== undefined ? (
-              <p className="text-green-400/80">
-                Cache errors: {Number(row.cachePct).toFixed(1)}%
-              </p>
-            ) : null}
-            {row.noCachePct !== null && row.noCachePct !== undefined ? (
-              <p className="text-red-400/80">
-                No cache errors: {Number(row.noCachePct).toFixed(1)}%
-              </p>
-            ) : null}
-          </div>
-        ) : null}
       </div>
     </div>
   );
 }
 
-export function LatencyChart({ data }: { data: LatencyPoint[] }) {
+export function LatencyChart({ data, activeLine, hoveredPoint }: { data: LatencyPoint[]; activeLine?: number | null; hoveredPoint?: LatencyPoint | null }) {
   const avgCacheHit = useMemo(() => {
     const vals = data.map((d) => d.cacheHit).filter((v): v is number => v !== null && v !== undefined);
     return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
@@ -102,11 +80,6 @@ export function LatencyChart({ data }: { data: LatencyPoint[] }) {
 
   const avgNoCache = useMemo(() => {
     const vals = data.map((d) => d.noCache).filter((v): v is number => v !== null && v !== undefined);
-    return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
-  }, [data]);
-
-  const avgMissRate = useMemo(() => {
-    const vals = data.map((d) => d.cacheMissRate).filter((v): v is number => v !== null && v !== undefined);
     return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
   }, [data]);
 
@@ -123,9 +96,10 @@ export function LatencyChart({ data }: { data: LatencyPoint[] }) {
   if (data.length === 0) return null;
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex-1 min-h-0">
-        <ResponsiveContainer width="100%" height="100%">
+    <div className="flex flex-col h-full relative">
+      <div className="flex-1 min-h-0 relative">
+        <div className="absolute inset-0">
+          <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={data} margin={{ top: 4, right: 8, bottom: 16, left: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgb(113 113 122 / 0.25)" />
             <XAxis
@@ -139,21 +113,15 @@ export function LatencyChart({ data }: { data: LatencyPoint[] }) {
               tick={{ fontSize: 11, fill: "#a1a1aa", fontWeight: 600 }}
               tickLine={false}
               axisLine={false}
-              width={48}
-              label={{ value: "ms", angle: -90, position: "insideLeft", offset: 8, style: { fontSize: 10, fill: "#a1a1aa", fontWeight: 600 } }}
-            />
-            <YAxis
-              yAxisId="error"
-              orientation="right"
-              tick={{ fontSize: 11, fill: "#a1a1aa", fontWeight: 600 }}
-              tickLine={false}
-              axisLine={false}
-              width={64}
-              domain={[0, 100]}
-              tickFormatter={(v: number) => `${v}%`}
-              label={{ value: "%", angle: 90, position: "insideRight", offset: 6, style: { fontSize: 10, fill: "#a1a1aa", fontWeight: 600 } }}
+              width={60}
+              label={{ value: "ms", angle: -90, position: "insideLeft", offset: 4, style: { fontSize: 10, fill: "#a1a1aa", fontWeight: 600 } }}
             />
             <Tooltip content={<CustomTooltip />} />
+            <ReferenceLine
+              x={activeLine ?? -999}
+              stroke="rgba(255,255,255,0.35)"
+              strokeWidth={activeLine != null ? 1.5 : 0}
+            />
             <Area
               type="monotone"
               dataKey="noCache"
@@ -176,45 +144,41 @@ export function LatencyChart({ data }: { data: LatencyPoint[] }) {
               dot={false}
               isAnimationActive={false}
             />
-            <Area
-              yAxisId="error"
-              type="monotone"
-              dataKey="cacheMissRate"
-              name="Miss Rate"
-              stroke="#f59e0b"
-              strokeWidth={1.5}
-              strokeDasharray="4 3"
-              fill="none"
-              dot={false}
-              isAnimationActive={false}
-            />
-            <Area
-              yAxisId="error"
-              type="monotone"
-              dataKey="noCachePct"
-              name="No Cache Errors"
-              stroke="#ef4444"
-              strokeWidth={1}
-              strokeDasharray="4 3"
-              fill="none"
-              dot={false}
-              isAnimationActive={false}
-            />
-            <Area
-              yAxisId="error"
-              type="monotone"
-              dataKey="cachePct"
-              name="Cache Errors"
-              stroke="#22c55e"
-              strokeWidth={1}
-              strokeDasharray="4 3"
-              fill="none"
-              dot={false}
-              isAnimationActive={false}
-            />
           </AreaChart>
         </ResponsiveContainer>
       </div>
+      </div>
+      {hoveredPoint && (
+        <div className="absolute top-1 right-1 rounded-lg border border-zinc-600/30 bg-[rgba(24,24,27,0.6)] backdrop-blur-xl px-2 py-1.5 text-[11px] text-zinc-100 shadow-lg pointer-events-none z-10">
+          <p className="mb-0.5 font-medium text-zinc-400">@ {hoveredPoint.t}s</p>
+          <div className="space-y-[2px]">
+            <div className="flex items-center gap-2">
+              <span className="h-2 w-2 rounded-sm bg-green-500/70" />
+              <span className="text-zinc-300">Cache Hit</span>
+              <span className="ml-auto tabular-nums">
+                {hoveredPoint.cacheHit != null ? fmt_ms(hoveredPoint.cacheHit) : "—"}
+              </span>
+            </div>
+            {hoveredPoint.cacheRps != null && (
+              <div className="text-[10px] text-zinc-500 pl-4 tabular-nums">
+                {hoveredPoint.cacheRps} req/s
+              </div>
+            )}
+            <div className="flex items-center gap-2">
+              <span className="h-2 w-2 rounded-sm bg-red-500/70" />
+              <span className="text-zinc-300">No Cache</span>
+              <span className="ml-auto tabular-nums">
+                {hoveredPoint.noCache != null ? fmt_ms(hoveredPoint.noCache) : "—"}
+              </span>
+            </div>
+            {hoveredPoint.noCacheRps != null && (
+              <div className="text-[10px] text-zinc-500 pl-4 tabular-nums">
+                {hoveredPoint.noCacheRps} req/s
+              </div>
+            )}
+          </div>
+        </div>
+      )}
       <div className="shrink-0 flex items-center justify-center gap-6 pt-2 pb-1 text-xs border-t border-zinc-700/30 mt-1">
         <span className="flex items-center gap-1.5">
           <span className="h-2 w-2 rounded-sm bg-green-500/60" />
@@ -222,11 +186,6 @@ export function LatencyChart({ data }: { data: LatencyPoint[] }) {
           <span className="font-mono tabular-nums text-green-400">{fmt_ms(avgCacheHit)}</span>
           <span className="text-zinc-500">·</span>
           <span className="font-mono tabular-nums text-zinc-400">{avgCacheRps > 0 ? `${avgCacheRps} rps` : "— rps"}</span>
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="h-2 w-2 rounded-sm bg-amber-500/60" />
-          <span className="text-zinc-400">Miss rate:</span>
-          <span className="font-mono tabular-nums text-amber-400">{avgMissRate.toFixed(1)}%</span>
         </span>
         <span className="flex items-center gap-1.5">
           <span className="h-2 w-2 rounded-sm bg-red-500/60" />

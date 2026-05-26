@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { LatencyChart, type LatencyPoint } from "@/components/LatencyChart";
+import { ErrorChart } from "@/components/ErrorChart";
 import type { Comparison } from "@/lib/use-sse";
 
 export function RunningView({
@@ -29,13 +30,15 @@ export function RunningView({
 }) {
   const totalDuration = Number(duration);
   const logRef = useRef<HTMLDivElement>(null);
+  const [hoveredEvent, setHoveredEvent] = useState<{ t: number; chart: string } | null>(null);
+  const hoveredPoint = hoveredEvent != null ? latencyHistory.find((d) => d.t === hoveredEvent.t) ?? null : null;
 
   const logEntries = useMemo(() => {
-    const entries: { t: number; level: string; msg: string }[] = [];
+    const entries: { t: number; level: string; chart: string; msg: string }[] = [];
     for (const pt of latencyHistory) {
       if (pt.events && pt.events.length > 0) {
         for (const ev of pt.events) {
-          entries.push({ t: pt.t, level: ev.level, msg: ev.msg });
+          entries.push({ t: pt.t, level: ev.level, chart: ev.chart ?? (ev.level === "error" ? "errors" : "latency"), msg: ev.msg });
         }
       }
     }
@@ -122,8 +125,8 @@ export function RunningView({
 
       {/* Chart legend + Latency chart + Events log */}
       <div className="flex flex-col lg:flex-row gap-4">
-        <div className="flex-1 glass-card rounded-lg px-4 pt-4 pb-2 min-h-[300px] md:min-h-[480px] flex flex-col">
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-1 shrink-0">
+        <div className="flex-1 glass-card rounded-lg px-6 pt-4 pb-3 h-[300px] lg:h-[420px] flex flex-col">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-0.5 shrink-0">
             <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">
               Latency
             </span>
@@ -132,36 +135,58 @@ export function RunningView({
               <span className="text-zinc-400">Cache Hit</span>
             </span>
             <span className="flex items-center gap-1.5 text-[11px]">
-              <span className="h-px w-3 border-b border-dashed border-amber-500" />
-              <span className="text-zinc-400">Miss Rate</span>
-            </span>
-            <span className="flex items-center gap-1.5 text-[11px]">
               <span className="h-2.5 w-2.5 rounded-sm bg-red-500/60" />
               <span className="text-zinc-400">No Cache</span>
             </span>
-            <span className="flex items-center gap-1.5 text-[11px]">
-              <span className="h-px w-3 border-b border-dashed border-red-400" />
-              <span className="text-zinc-400">No Cache Errors</span>
-            </span>
-            <span className="flex items-center gap-1.5 text-[11px]">
-              <span className="h-px w-3 border-b border-dashed border-green-400" />
-              <span className="text-zinc-400">Cache Errors</span>
-            </span>
           </div>
-          <div className="h-[250px] md:h-[430px]">
-            <LatencyChart data={latencyHistory} />
+          <div className="h-[280px]">
+            <LatencyChart data={latencyHistory} activeLine={hoveredEvent?.t ?? null} hoveredPoint={hoveredEvent?.chart === "latency" ? hoveredPoint : null} />
           </div>
+          {latencyHistory.some(
+            (d) =>
+              (d.noCachePct != null && d.noCachePct > 0) ||
+              (d.cachePct != null && d.cachePct > 0) ||
+              (d.cacheMissRate != null && d.cacheMissRate > 0),
+          ) && (
+            <>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1.5 mb-0.5 shrink-0 border-t border-zinc-700/30 pt-1.5">
+                <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">
+                  Errors
+                </span>
+                <span className="flex items-center gap-1.5 text-[11px]">
+                  <span className="h-px w-3 border-b border-dashed border-red-400" />
+                  <span className="text-zinc-400">No Cache</span>
+                </span>
+                <span className="flex items-center gap-1.5 text-[11px]">
+                  <span className="h-px w-3 border-b border-dashed border-green-400" />
+                  <span className="text-zinc-400">Cache</span>
+                </span>
+                <span className="flex items-center gap-1.5 text-[11px]">
+                  <span className="h-px w-3 border-b border-dashed border-amber-400" />
+                  <span className="text-zinc-400">Miss Rate</span>
+                </span>
+              </div>
+              <div className="shrink-0 h-[150px]">
+                <ErrorChart data={latencyHistory} activeLine={hoveredEvent?.t ?? null} hoveredPoint={hoveredEvent?.chart === "errors" ? hoveredPoint : null} />
+              </div>
+            </>
+          )}
         </div>
-        <div className="w-full lg:w-80 glass-card rounded-lg px-3 py-3 h-[200px] lg:h-[480px] flex flex-col">
+        <div className="w-full lg:w-80 glass-card rounded-lg px-5 py-4 lg:h-[420px] h-[200px] flex flex-col">
           <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide mb-2 shrink-0">
             Events
           </span>
-          <div className="flex-1 overflow-y-auto space-y-1 text-[11px] font-mono scroll-log" ref={logRef}>
+          <div className="flex-1 overflow-y-auto overflow-x-hidden space-y-1.5 text-[11px] font-mono scroll-log break-words" ref={logRef}>
             {logEntries.length === 0 && (
               <p className="text-zinc-500 italic pt-8 text-center">Waiting for data...</p>
             )}
             {logEntries.map((e, i) => (
-              <div key={i} className="flex items-start gap-1.5 leading-tight">
+              <div
+                key={i}
+                className="flex items-start gap-1.5 leading-tight rounded px-1 -mx-1 cursor-pointer transition-colors hover:bg-zinc-700/40"
+                onMouseEnter={() => setHoveredEvent({ t: e.t, chart: e.chart })}
+                onMouseLeave={() => setHoveredEvent(null)}
+              >
                 <span className="shrink-0 mt-0.5 tabular-nums text-zinc-600">@{String(e.t).padStart(2, "\xa0")}</span>
                 <span className="shrink-0">
                   {e.level === "error" ? (

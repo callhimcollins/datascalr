@@ -22,7 +22,7 @@ type RawSSEMessage = {
   noCacheCount?: number;
   cacheRps?: number;
   noCacheRps?: number;
-  events?: { level: string; msg: string }[];
+  events?: { level: string; chart?: string; msg: string }[];
   done?: boolean;
   comparison?: Comparison;
 };
