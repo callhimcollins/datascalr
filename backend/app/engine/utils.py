@@ -44,7 +44,7 @@ def build_url(base_url: str, endpoint: dict) -> str:
         for j, param in enumerate(params):
             if "=" in param:
                 key, val = param.split("=", 1)
-                if val.startswith(":q"):
+                if val.startswith(":q") or val == ":term":
                     is_cached = "cached=true" in path
                     words = ["electronics", "home", "sports", "books"] if is_cached else ["clothing", "kitchen", "premium", "garden"]
                     params[j] = f"{key}={random.choice(words)}"

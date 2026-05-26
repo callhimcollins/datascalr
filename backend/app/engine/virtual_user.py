@@ -54,10 +54,19 @@ async def virtual_user_loop(
 
         latency = (time.monotonic() - start) * 1000
 
+        cache_hit: bool | None = None
+        if is_cached and error is None:
+            cache_header = resp.headers.get("x-cache") if status_code else None
+            if cache_header == "HIT":
+                cache_hit = True
+            elif cache_header == "MISS":
+                cache_hit = False
+
         collector.add_sample(Sample(
             latency_ms=latency,
             status_code=status_code,
             cached=is_cached,
+            cache_hit=cache_hit,
             error=error,
         ))
 

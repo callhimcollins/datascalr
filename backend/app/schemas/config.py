@@ -9,6 +9,19 @@ class EndpointConfig(BaseModel):
     body_template: dict | None = None
 
 
+class ProfileEndpoint(BaseModel):
+    method: str
+    path: str
+    description: str
+    weight: float
+
+
+class Profile(BaseModel):
+    label: str
+    description: str
+    endpoints: list[ProfileEndpoint]
+
+
 class GenerateConfigRequest(BaseModel):
     platform: str
     concurrency: int = 10
@@ -18,4 +31,4 @@ class GenerateConfigRequest(BaseModel):
 
 class GenerateConfigResponse(BaseModel):
     base_url: str
-    endpoints: list[EndpointConfig]
+    profiles: list[Profile]

@@ -13,7 +13,8 @@ export type Comparison = {
 
 type RawSSEMessage = {
   t: number;
-  cache: number | null;
+  cacheHit: number | null;
+  cacheMissRate: number | null;
   noCache: number | null;
   cachePct: number | null;
   noCachePct: number | null;

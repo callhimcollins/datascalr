@@ -13,8 +13,9 @@ def analyze(
     prev = history[-1] if history else None
     cc = bucket.get("cacheCount", 0)
     nc = bucket.get("noCacheCount", 0)
-    cv = bucket.get("cache")
+    cv = bucket.get("cacheHit")
     nv = bucket.get("noCache")
+    mr = bucket.get("cacheMissRate")
 
     if t == 1:
         events.append({
@@ -28,32 +29,29 @@ def analyze(
             "msg": f"All {config['concurrency']} users are now live. Watching how the system handles the full load.",
         })
 
-    # Cache expiry storm — only fire once per cycle
-    prev_had_cache = state.get("prev_had_cache", False)
-    if t > 2 and cc == 0 and prev_had_cache and not state.get("storm_fired"):
+    # Cache expiry storm — high miss rate = all cached requests hitting PG
+    if t > 2 and mr is not None and mr > 80 and not state.get("storm_fired"):
         events.append({
             "level": "warn",
-            "msg": "Cache just expired — all cached requests are hitting PostgreSQL directly. Expect a latency spike until Redis repopulates.",
+            "msg": f"Cache miss rate at {mr:.0f}% — cached requests hitting PostgreSQL directly until Redis repopulates.",
         })
         state["storm_fired"] = True
         state["storm_recovered"] = False
 
-    # Cache recovery — only fire after a storm
-    if cv is not None and cv < 20 and state.get("storm_fired") and not state.get("storm_recovered"):
+    # Cache recovery — miss rate dropped back down
+    if mr is not None and mr < 30 and state.get("storm_fired") and not state.get("storm_recovered"):
         events.append({
             "level": "info",
-            "msg": f"Redis is serving HITs again at {cv:.0f}ms — cache recovered from the last expiry.",
+            "msg": f"Cache miss rate back to {mr:.0f}% — Redis is serving HITs again.",
         })
         state["storm_recovered"] = True
         state["storm_fired"] = False
 
-    state["prev_had_cache"] = cc > 0
-
-    # Redis saturation — high request volume + rising cache latency
+    # Redis saturation — cache hit latency climbing under high volume
     if t > 5 and cv is not None:
         cache_rps = bucket.get("cacheRps", 0)
         last_redis_level = state.get("redis_level", "normal")
-        recent_cache = [h["cache"] for h in history[-5:] if h.get("cache") is not None]
+        recent_cache = [h["cacheHit"] for h in history[-5:] if h.get("cacheHit") is not None]
 
         if cache_rps > 50 and cv > 20 and len(recent_cache) >= 3 and last_redis_level != "saturated":
             avg_recent_cache = sum(recent_cache) / len(recent_cache)
@@ -66,11 +64,11 @@ def analyze(
         elif cv < 8 and cache_rps < 30 and last_redis_level != "normal":
             events.append({
                 "level": "info",
-                "msg": f"Redis recovered — cache latency back to {cv:.0f}ms under normal load.",
+                "msg": f"Redis recovered — cache hit latency back to {cv:.0f}ms under normal load.",
             })
             state["redis_level"] = "normal"
 
-    # PG degradation — only fire when it gets significantly worse
+    # PG degradation — uncached latency trends upward
     if t > 7 and nv is not None:
         recent = [h["noCache"] for h in history[-5:] if h.get("noCache") is not None]
         if len(recent) >= 3:
