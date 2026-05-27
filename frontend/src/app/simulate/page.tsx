@@ -26,6 +26,7 @@ function SimulateInner() {
   const sseUrl = runId ? `${API_BASE}/api/runs/${runId}/stream` : null;
   const { data: latencyHistory, isComplete: sseComplete, comparison: sseComparison } = useSSE(sseUrl);
   const isComplete = sseComplete || autoComplete;
+  const [aiAnalysis, setAiAnalysis] = useState<{ why: string; recommendation: string } | null>(null);
 
   // Fallback comparison from local data when SSE dropped before done message
   const comparison = useMemo(() => {
@@ -144,6 +145,42 @@ function SimulateInner() {
     };
   }, [runId, duration]);
 
+  // AI analysis after run completes
+  const steadyN = Number(rampUp) || 0;
+  const steady = latencyHistory.filter((d) => d.t >= Math.max(steadyN + 1, 1));
+
+  useEffect(() => {
+    if (!isComplete || aiAnalysis || steady.length < 2) return;
+    const cacheVals = steady.map((d) => d.cacheHit).filter((v): v is number => v != null);
+    const noCacheVals = steady.map((d) => d.noCache).filter((v): v is number => v != null);
+    const missRates = steady.map((d) => d.cacheMissRate).filter((v): v is number => v != null);
+
+    fetch(`${API_BASE}/api/analyze-run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        avg_cache_ms: cacheVals.length ? Math.round(cacheVals.reduce((a, b) => a + b, 0) / cacheVals.length * 10) / 10 : 0,
+        avg_no_cache_ms: noCacheVals.length ? Math.round(noCacheVals.reduce((a, b) => a + b, 0) / noCacheVals.length * 10) / 10 : 0,
+        max_cache_ms: cacheVals.length ? Math.round(Math.max(...cacheVals) * 10) / 10 : 0,
+        max_no_cache_ms: noCacheVals.length ? Math.round(Math.max(...noCacheVals) * 10) / 10 : 0,
+        avg_miss_rate: missRates.length ? Math.round(missRates.reduce((a, b) => a + b, 0) / missRates.length * 10) / 10 : null,
+        max_miss_rate: missRates.length ? Math.round(Math.max(...missRates) * 10) / 10 : null,
+        cache_error_ticks: steady.filter((d) => (d.cachePct ?? 0) > 0).length,
+        no_cache_error_ticks: steady.filter((d) => (d.noCachePct ?? 0) > 0).length,
+        total_ticks: steady.length,
+        avg_rps: Math.round(steady.reduce((s, d) => s + (d.cacheRps ?? 0) + (d.noCacheRps ?? 0), 0) / steady.length),
+        concurrency: Number(concurrency),
+        ramp_up: Number(rampUp),
+        duration: Number(duration),
+        winner: comparison?.winner ?? "tie",
+        percentage_faster: Math.abs(comparison?.percentage_faster ?? 0),
+        profile_label: platform,
+      }),
+    })
+      .then((r) => r.json().then((d) => setAiAnalysis(d)).catch(() => {}))
+      .catch(() => {});
+  }, [isComplete]);
+
   return (
     <main className="flex flex-1 flex-col items-center px-4 md:px-12 pt-0">
       <div className="w-full max-w-full">
@@ -174,6 +211,7 @@ function SimulateInner() {
             progress={progress}
             isComplete={isComplete}
             comparison={comparison}
+            aiAnalysis={aiAnalysis}
             onRunAgain={handleRunAgain}
             onConfigure={handleConfigure}
           />

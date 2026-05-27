@@ -14,6 +14,7 @@ export function RunningView({
   progress,
   isComplete,
   comparison,
+  aiAnalysis,
   onRunAgain,
   onConfigure,
 }: {
@@ -25,6 +26,7 @@ export function RunningView({
   progress: number;
   isComplete: boolean;
   comparison: Comparison | null;
+  aiAnalysis: { why: string; recommendation: string } | null;
   onRunAgain: () => void;
   onConfigure: () => void;
 }) {
@@ -32,6 +34,87 @@ export function RunningView({
   const logRef = useRef<HTMLDivElement>(null);
   const [hoveredEvent, setHoveredEvent] = useState<{ t: number; chart: string } | null>(null);
   const hoveredPoint = hoveredEvent != null ? latencyHistory.find((d) => d.t === hoveredEvent.t) ?? null : null;
+
+  const runAnalysis = useMemo(() => {
+    const n = Number(rampUp) || 0;
+    const steady = latencyHistory.filter((d) => d.t >= Math.max(n + 1, 1));
+    if (steady.length < 2) return null;
+
+    const cacheVals = steady.map((d) => d.cacheHit).filter((v): v is number => v != null);
+    const noCacheVals = steady.map((d) => d.noCache).filter((v): v is number => v != null);
+    const missRates = steady.map((d) => d.cacheMissRate).filter((v): v is number => v != null);
+    const cacheErrs = steady.filter((d) => (d.cachePct ?? 0) > 0);
+    const noCacheErrs = steady.filter((d) => (d.noCachePct ?? 0) > 0);
+    const maxMiss = missRates.length ? Math.max(...missRates) : 0;
+    const avgMiss = missRates.length ? missRates.reduce((a, b) => a + b, 0) / missRates.length : 0;
+    const avgRps = steady.length
+      ? steady.reduce((s, d) => s + (d.cacheRps ?? 0) + (d.noCacheRps ?? 0), 0) / steady.length
+      : 0;
+
+    const cacheHigh = cacheVals.length ? Math.max(...cacheVals) : 0;
+    const noCacheHigh = noCacheVals.length ? Math.max(...noCacheVals) : 0;
+    const avgCache = cacheVals.length ? cacheVals.reduce((a, b) => a + b, 0) / cacheVals.length : 0;
+    const avgNoCache = noCacheVals.length ? noCacheVals.reduce((a, b) => a + b, 0) / noCacheVals.length : 0;
+
+    const totalExpected = Number(concurrency) || 0;
+    const througputLow = totalExpected > 0 && avgRps < totalExpected * 0.3;
+
+    const bothHighError = cacheErrs.length > steady.length * 0.3 && noCacheErrs.length > steady.length * 0.3;
+    const cacheOnlyError = cacheErrs.length > steady.length * 0.3 && noCacheErrs.length <= steady.length * 0.15;
+    const noCacheOnlyError = noCacheErrs.length > steady.length * 0.3 && cacheErrs.length <= steady.length * 0.15;
+
+    const diff = avgNoCache - avgCache;
+    const pctDiff = avgNoCache > 0 ? (diff / avgNoCache) * 100 : 0;
+
+    if (througputLow && bothHighError) {
+      return `At ${totalExpected} virtual users, throughput was only ${Math.round(avgRps)} req/s — well below the expected ${totalExpected}. Both cache and no-cache errored throughout the run. The bottleneck is the httpx connection pool (max 1000): VUs spent more time waiting for HTTP connections than making requests. The error chart shows cache and no-cache errors rising together, confirming a system-wide saturation rather than a specific backend issue.`;
+    }
+
+    if (througputLow && cacheHigh < 200) {
+      return `Despite ${totalExpected} virtual users, throughput was only ${Math.round(avgRps)} req/s. Cache latency stayed low (${Math.round(avgCache)}ms avg) but VUs weren't producing requests at the expected rate. This suggests the think time between requests or asyncio scheduling overhead is limiting throughput more than backend performance.`;
+    }
+
+    if (pctDiff > 20 && comparison?.winner === "cache") {
+      const msgs: string[] = [`Cache was ${Math.round(pctDiff)}% faster than querying PostgreSQL directly (${Math.round(avgCache)}ms vs ${Math.round(avgNoCache)}ms).`];
+      const hasErrors = noCacheErrs.length > 0 || cacheErrs.length > 0;
+      if (hasErrors && noCacheErrs.length > cacheErrs.length) {
+        msgs.push(` The uncached path also saw more timeout errors (${noCacheErrs.length} of ${steady.length} ticks) than cache (${cacheErrs.length} ticks), suggesting PostgreSQL's connection pool (max_size=4) was the limiting factor.`);
+      } else if (hasErrors) {
+        msgs.push(` Both paths errored under the load, but cache maintained lower latency on successful requests.`);
+      } else {
+        msgs.push(` Low error rates confirm both Redis and PostgreSQL kept up — Redis was simply faster for the request pattern.`);
+      }
+      if (avgMiss > 20) msgs.push(` Cache miss rate averaged ${Math.round(avgMiss)}% with a peak of ${Math.round(maxMiss)}% — Redis TTL expiry caused periodic cache repopulation spikes.`);
+      return msgs.join("");
+    }
+
+    if (pctDiff < -20 && comparison?.winner === "no_cache") {
+      const msgs: string[] = [`No-cache was ${Math.round(Math.abs(pctDiff))}% faster than cache (${Math.round(avgNoCache)}ms vs ${Math.round(avgCache)}ms).`];
+      if (avgCache > 1000 && avgMiss < 15) {
+        msgs.push(` Redis latency averaged ${Math.round(avgCache)}ms under load — the single-threaded event loop became the bottleneck. With an uneven weight split, the cached endpoint received more traffic, amplifying Redis contention.`);
+      } else if (avgMiss > 40) {
+        msgs.push(` Cache miss rate averaged ${Math.round(avgMiss)}% — most "cached" requests hit PostgreSQL anyway due to expired keys, negating the cache advantage. This is typical of TTL expiry storms under sustained load.`);
+      } else if (bothHighError) {
+        msgs.push(` However, both paths saw errors (${Math.round(noCacheErrs.length / steady.length * 100)}% of ticks for no-cache, ${Math.round(cacheErrs.length / steady.length * 100)}% for cache) — system-wide httpx connection pool saturation.`);
+      }
+      return msgs.join("");
+    }
+
+    if (comparison?.winner === "cache" && pctDiff <= 20) {
+      const msgs: string[] = [`Cache was ${Math.round(pctDiff)}% faster (${Math.round(avgCache)}ms vs ${Math.round(avgNoCache)}ms), but the margin is narrow.`];
+      if (avgMiss > 30) msgs.push(` Cache miss rate averaged ${Math.round(avgMiss)}% (peak ${Math.round(maxMiss)}%), meaning Redis TTL cycles kept forcing cache requests through to PostgreSQL.`);
+      if (avgCache > 100) msgs.push(` Redis itself was under strain at ${Math.round(avgCache)}ms average — not far from PostgreSQL's ${Math.round(avgNoCache)}ms.`);
+      return msgs.join("");
+    }
+
+    if (comparison?.winner === "no_cache" && Math.abs(pctDiff) <= 20) {
+      const msgs: string[] = [`No-cache was ${Math.round(Math.abs(pctDiff))}% faster, but within the margin of noise.`];
+      if (avgMiss > 30) msgs.push(` Cache miss rate averaged ${Math.round(avgMiss)}% — a better TTL strategy or cache warming would likely flip the result.`);
+      return msgs.join("");
+    }
+
+    return null;
+  }, [latencyHistory, rampUp, concurrency, comparison]);
 
   const logEntries = useMemo(() => {
     const entries: { t: number; level: string; chart: string; msg: string }[] = [];
@@ -257,6 +340,17 @@ export function RunningView({
               )}
             </div>
           </div>
+          {runAnalysis && (
+            <div className="mt-3 rounded-lg bg-zinc-100/60 dark:bg-zinc-800/60 px-3 py-2.5 text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
+              {runAnalysis}
+            </div>
+          )}
+          {aiAnalysis && (
+            <div className="mt-3 text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed space-y-1">
+              <p>{aiAnalysis.why}</p>
+              <p className="text-zinc-500 dark:text-zinc-400">{aiAnalysis.recommendation}</p>
+            </div>
+          )}
         </div>
       )}
 

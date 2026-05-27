@@ -7,6 +7,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from .routes.analyze import router as analyze_router
 from .routes.generate import router as generate_router
 from .routes.runs import router as runs_router
 from .routes.stream import router as stream_router
@@ -21,6 +22,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(analyze_router)
 app.include_router(generate_router)
 app.include_router(runs_router)
 app.include_router(stream_router)
