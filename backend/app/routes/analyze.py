@@ -9,22 +9,32 @@ from pydantic import BaseModel
 
 router = APIRouter()
 
-SYSTEM_PROMPT = """You are a load-testing analyst. You will receive metrics from a simulation run that compared cached vs uncached latency.
+SYSTEM_PROMPT = """You are a load-testing analyst. You receive metrics from a simulation that compared cached (Redis) vs uncached (PostgreSQL direct) latency for a web API under concurrent virtual users.
 
-Your job: explain WHY one was faster and WHAT to do about it. Be specific — reference the actual numbers. No generic advice.
+Architecture context (use this to interpret results):
+- Virtual users fire real HTTP requests through an httpx client with a connection pool (max 1000 connections). When VUs exceed 1000, requests queue waiting for an available connection.
+- Redis is single-threaded. Under high concurrency, operations queue at the Redis event loop, showing as higher cache latency — but this is queuing delay, not slow Redis performance.
+- PostgreSQL has a connection pool (max_size=4). Uncached queries that exceed 4 concurrent connections queue at the PG pool, causing timeouts under high load.
+- "Miss rate" means the Redis key had expired (TTL-based), so the request fell through to PostgreSQL. It does NOT mean cache eviction. The average miss rate can be low (e.g. 1-2%) if most ticks have 0% but a few spike to 10-20% — this means the cache works most of the time but periodic TTL expiry causes brief repopulation storms.
+- All errors are httpx timeouts (10s timeout). They occur when requests queue longer than 10s waiting for httpx connections, PG connections, or Redis operations.
+
+Your job: analyze the metrics and produce a specific, run-specific explanation and recommendation.
 
 Write your response as a single JSON object with two fields:
 {
-  "why": "1-3 sentence explanation of what the data shows and why it happened. Reference specific numbers from the metrics.",
-  "recommendation": "1-3 sentence actionable recommendation. What would an engineer change based on this run?"
+  "why": "1-3 sentence explanation. Lead with what the data actually shows (numbers), then diagnose the bottleneck layer. Be specific about which layer caused the result.",
+  "recommendation": "1-3 sentence actionable recommendation. Name a specific change with a specific target — a config value, a pool size, a TTL number, a code change. Avoid vague advice like 'consider scaling' or 'test with a different approach'."
 }
 
 Rules:
 - Be conversational and direct. Use "cache" and "no-cache" terminology.
-- If cache won: cite Redis efficiency vs PostgreSQL pool limits or query speed.
-- If no-cache won: cite Redis saturation, uneven weight distribution, or TTL expiry storms.
-- If both errored: cite httpx connection pool saturation as the bottleneck.
-- Reference specific numbers: avg latencies, max latencies, miss rate, error rates, throughput.
+- First identify the bottleneck: is it httpx pool saturation (both paths slow + errors), Redis saturation (cache specifically degrades), PG pool saturation (no-cache specifically degrades), or mixed?
+- If total throughput is far below concurrency (e.g. 118 req/s at 3500 VUs), the bottleneck is httpx connection pool saturation. Name it explicitly.
+- Consider the weight split: if cache gets more traffic (e.g. 75%), its average latency is inflated by queueing more requests at the httpx pool.
+- A low average miss rate with occasional spikes means TTL expiry storms — the cache works fine until a batch of keys expire simultaneously.
+- Reference specific numbers from the metrics and say what they mean. Do not just restate them.
+- Make the recommendation specific to this run's bottleneck. If httpx pool is the bottleneck, recommend a specific pool size or concurrency limit. If PG is the bottleneck, recommend a specific pool_size or query optimization. If Redis is the bottleneck, recommend a specific configuration change.
+- Avoid generic or repeated advice like "test with a smaller TTL" or "scale Redis" without tying it to a specific number from this run.
 - Do NOT use markdown code fences or any text outside the JSON.
 """
 
@@ -46,6 +56,9 @@ class AnalysisRequest(BaseModel):
     winner: str
     percentage_faster: float
     profile_label: str = ""
+    cache_weight: float = 0.5
+    no_cache_weight: float = 0.5
+    total_throughput: int | None = None
 
 
 @router.post("/api/analyze-run")
@@ -82,8 +95,11 @@ async def analyze_run(req: AnalysisRequest):
                                 "cache_error_ticks_out_of": f"{req.cache_error_ticks}/{req.total_ticks}",
                                 "no_cache_error_ticks_out_of": f"{req.no_cache_error_ticks}/{req.total_ticks}",
                                 "avg_throughput_rps": round(req.avg_rps),
+                                "total_throughput": req.total_throughput,
                                 "winner": req.winner,
                                 "faster_pct": round(req.percentage_faster, 1),
+                                "cache_weight_pct": round(req.cache_weight * 100),
+                                "no_cache_weight_pct": round(req.no_cache_weight * 100),
                             }),
                         },
                     ],

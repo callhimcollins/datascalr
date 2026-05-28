@@ -21,6 +21,7 @@ function SimulateInner() {
   const [elapsed, setElapsed] = useState(0);
   const [progress, setProgress] = useState(0);
   const [autoComplete, setAutoComplete] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
   const startedAtRef = useRef<number | null>(null);
 
   const sseUrl = runId ? `${API_BASE}/api/runs/${runId}/stream` : null;
@@ -99,6 +100,8 @@ function SimulateInner() {
     setProgress(0);
     setError(null);
     setAutoComplete(false);
+    setAiAnalysis(null);
+    setAiLoading(false);
   }, []);
 
   const router = useRouter();
@@ -155,6 +158,16 @@ function SimulateInner() {
     const noCacheVals = steady.map((d) => d.noCache).filter((v): v is number => v != null);
     const missRates = steady.map((d) => d.cacheMissRate).filter((v): v is number => v != null);
 
+    // Compute weight split from endpoints
+    const cacheWeight = sim?.endpoints
+      .filter((ep) => ep.path.includes("cached=true"))
+      .reduce((s, ep) => s + (ep.weight ?? 0), 0) ?? 0.5;
+    const noCacheWeight = sim?.endpoints
+      .filter((ep) => ep.path.includes("cached=false"))
+      .reduce((s, ep) => s + (ep.weight ?? 0), 0) ?? 0.5;
+    const totalWeight = cacheWeight + noCacheWeight;
+
+    setAiLoading(true);
     fetch(`${API_BASE}/api/analyze-run`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -175,10 +188,13 @@ function SimulateInner() {
         winner: comparison?.winner ?? "tie",
         percentage_faster: Math.abs(comparison?.percentage_faster ?? 0),
         profile_label: platform,
+        cache_weight: totalWeight > 0 ? cacheWeight / totalWeight : 0.5,
+        no_cache_weight: totalWeight > 0 ? noCacheWeight / totalWeight : 0.5,
+        total_throughput: steady.reduce((s, d) => s + (d.cacheRps ?? 0) + (d.noCacheRps ?? 0), 0),
       }),
     })
-      .then((r) => r.json().then((d) => setAiAnalysis(d)).catch(() => {}))
-      .catch(() => {});
+      .then((r) => r.json().then((d) => { setAiAnalysis(d); setAiLoading(false); }).catch(() => setAiLoading(false)))
+      .catch(() => setAiLoading(false));
   }, [isComplete]);
 
   return (
@@ -212,8 +228,10 @@ function SimulateInner() {
             isComplete={isComplete}
             comparison={comparison}
             aiAnalysis={aiAnalysis}
+            aiLoading={aiLoading}
             onRunAgain={handleRunAgain}
             onConfigure={handleConfigure}
+            runKey={runKey}
           />
         )}
       </div>

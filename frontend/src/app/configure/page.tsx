@@ -136,7 +136,7 @@ function ConfigureInner() {
                 handleNext();
               }}
             >
-              <Card className="border-border/50 shadow-sm">
+              <Card className="border-border/50 shadow-sm dark:bg-[rgba(9,9,11,0.98)]">
                 <CardContent className="space-y-5 pt-6">
                   <div className="space-y-2">
                     <Label htmlFor="platform">What are you testing?</Label>
@@ -192,7 +192,7 @@ function ConfigureInner() {
                   <Button
                     type="submit"
                     disabled={!valid || generating}
-                    className="!mt-6 w-full cursor-pointer bg-gradient-to-r from-amber-600 to-orange-600 text-white hover:from-amber-500 hover:to-orange-500 disabled:opacity-40 disabled:pointer-events-auto disabled:cursor-not-allowed disabled:hover:from-amber-600 disabled:hover:to-orange-600 shadow-sm hover:shadow-md hover:shadow-amber-600/20 transition-all"
+                    className="!mt-6 w-full cursor-pointer bg-gradient-to-r from-amber-600 to-orange-600 text-white hover:from-amber-500 hover:to-orange-500 disabled:opacity-40 disabled:pointer-events-auto disabled:cursor-not-allowed disabled:hover:from-amber-600 disabled:hover:to-orange-600 shadow-sm hover:shadow-md hover:shadow-amber-600/20 transition-all border-0"
                     size="lg"
                   >
                     {generating ? (
@@ -313,7 +313,7 @@ function ConfigureInner() {
             {selectedProfile !== null && (
               <Button
                 onClick={handleSimulate}
-                className="!mt-2 w-full cursor-pointer bg-gradient-to-r from-amber-600 to-orange-600 text-white hover:from-amber-500 hover:to-orange-500 shadow-sm hover:shadow-md hover:shadow-amber-600/20 transition-all"
+                className="!mt-2 w-full cursor-pointer bg-gradient-to-r from-amber-600 to-orange-600 text-white hover:from-amber-500 hover:to-orange-500 shadow-sm hover:shadow-md hover:shadow-amber-600/20 transition-all border-0"
                 size="lg"
               >
                 Simulate

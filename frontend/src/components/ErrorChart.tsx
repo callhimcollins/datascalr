@@ -58,6 +58,11 @@ export function ErrorChart({ data, activeLine, hoveredPoint }: { data: LatencyPo
     return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
   }, [data]);
 
+  const avgMissRate = useMemo(() => {
+    const vals = data.map((d) => d.cacheMissRate).filter((v): v is number => v != null);
+    return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+  }, [data]);
+
   const hasErrors = data.some(
     (d) =>
       (d.noCachePct != null && d.noCachePct > 0) ||
@@ -173,6 +178,11 @@ export function ErrorChart({ data, activeLine, hoveredPoint }: { data: LatencyPo
           <span className="h-2 w-2 rounded-sm bg-green-500/60" />
           <span className="text-zinc-400">Cache Errors:</span>
           <span className="font-mono tabular-nums text-green-400">{avgCacheErr.toFixed(1)}%</span>
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="h-2 w-2 rounded-sm bg-amber-500/60" />
+          <span className="text-zinc-400">Miss Rate:</span>
+          <span className="font-mono tabular-nums text-amber-400">{avgMissRate.toFixed(1)}%</span>
         </span>
       </div>
     </div>

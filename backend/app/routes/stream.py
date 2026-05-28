@@ -26,7 +26,7 @@ def _save_run(run_id: str, run: dict) -> None:
 
     # Compute steady-state averages (skip ramp-up period)
     ramp_up = config.get("ramp_up", 0)
-    steady_state_start = max(ramp_up + 1, 1)
+    steady_state_start = ramp_up
     cache_steady = [m["cacheHit"] for m in metrics[steady_state_start:] if m.get("cacheHit") is not None]
     no_cache_steady = [m["noCache"] for m in metrics[steady_state_start:] if m.get("noCache") is not None]
 
@@ -126,7 +126,7 @@ async def stream_run(run_id: str, request: Request):
             no_cache_vals = [m["noCache"] for m in run["metrics"] if m.get("noCache") is not None]
             
             ramp_up = config.get("ramp_up", 0)
-            steady_state_start = max(ramp_up + 1, 1)
+            steady_state_start = ramp_up
             cache_steady = [m["cacheHit"] for m in run["metrics"][steady_state_start:] if m.get("cacheHit") is not None]
             no_cache_steady = [m["noCache"] for m in run["metrics"][steady_state_start:] if m.get("noCache") is not None]
             

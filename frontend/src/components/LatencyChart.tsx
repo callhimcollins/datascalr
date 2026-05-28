@@ -21,8 +21,12 @@ export type LogEvent = {
 export type LatencyPoint = {
   t: number;
   cacheHit: number | null;
+  cacheHit_p95: number | null;
+  cacheHit_p99: number | null;
   cacheMissRate: number | null;
   noCache: number | null;
+  noCache_p95: number | null;
+  noCache_p99: number | null;
   cachePct: number | null;
   noCachePct: number | null;
   cacheCount?: number;
@@ -36,9 +40,28 @@ function fmt_ms(v: number): string {
   return v < 1 ? `${v.toFixed(2)} ms` : `${v.toFixed(1)} ms`;
 }
 
-function CustomTooltip({ active, payload, label }: Record<string, unknown>) {
+function getCacheKey(percentile: string): string {
+  return percentile === "p50" ? "cacheHit" : `cacheHit_${percentile}`;
+}
+
+function getNoCacheKey(percentile: string): string {
+  return percentile === "p50" ? "noCache" : `noCache_${percentile}`;
+}
+
+function getVal(row: Record<string, unknown>, key: string): number | null {
+  const v = row[key];
+  return v !== null && v !== undefined ? Number(v) : null;
+}
+
+function CustomTooltip({ active, payload, label, percentile }: Record<string, unknown>) {
   if (!active || !payload || !Array.isArray(payload) || payload.length === 0) return null;
   const row = payload[0]?.payload ?? {};
+  const p = (percentile ?? "p50") as string;
+  const cacheKey = getCacheKey(p);
+  const noCacheKey = getNoCacheKey(p);
+  const cacheVal = getVal(row, cacheKey);
+  const noCacheVal = getVal(row, noCacheKey);
+
   return (
     <div className="rounded-lg border border-zinc-600/30 bg-[rgba(24,24,27,0.6)] backdrop-blur-xl px-3 py-2 text-xs text-zinc-100 shadow-lg">
       <p className="mb-1.5 font-medium text-zinc-400">@ {String(label)}s</p>
@@ -47,9 +70,7 @@ function CustomTooltip({ active, payload, label }: Record<string, unknown>) {
           <span className="h-2 w-2 rounded-sm bg-green-500/70" />
           <span className="text-zinc-300">Cache Hit</span>
           <span className="ml-auto tabular-nums">
-            {row.cacheHit !== null && row.cacheHit !== undefined
-              ? fmt_ms(Number(row.cacheHit))
-              : "—"}
+            {cacheVal !== null ? fmt_ms(cacheVal) : "—"}
           </span>
           <span className="text-zinc-500">
             {row.cacheRps !== undefined ? `${row.cacheRps}/s` : ""}
@@ -59,9 +80,7 @@ function CustomTooltip({ active, payload, label }: Record<string, unknown>) {
           <span className="h-2 w-2 rounded-sm bg-red-500/70" />
           <span className="text-zinc-300">No Cache</span>
           <span className="ml-auto tabular-nums">
-            {row.noCache !== null && row.noCache !== undefined
-              ? fmt_ms(Number(row.noCache))
-              : "—"}
+            {noCacheVal !== null ? fmt_ms(noCacheVal) : "—"}
           </span>
           <span className="text-zinc-500">
             {row.noCacheRps !== undefined ? `${row.noCacheRps}/s` : ""}
@@ -72,26 +91,34 @@ function CustomTooltip({ active, payload, label }: Record<string, unknown>) {
   );
 }
 
-export function LatencyChart({ data, activeLine, hoveredPoint }: { data: LatencyPoint[]; activeLine?: number | null; hoveredPoint?: LatencyPoint | null }) {
+export function LatencyChart({ data, activeLine, hoveredPoint, rampUp, percentile = "p50" }: { data: LatencyPoint[]; activeLine?: number | null; hoveredPoint?: LatencyPoint | null; rampUp?: number; percentile?: "p50" | "p95" | "p99" }) {
+  const cacheKey = percentile === "p50" ? "cacheHit" : `cacheHit_${percentile}`;
+  const noCacheKey = percentile === "p50" ? "noCache" : `noCache_${percentile}`;
+
+  const steadyData = useMemo(() => {
+    if (rampUp == null || rampUp < 1) return data;
+    return data.filter((d) => d.t >= rampUp + 1);
+  }, [data, rampUp]);
+
   const avgCacheHit = useMemo(() => {
-    const vals = data.map((d) => d.cacheHit).filter((v): v is number => v !== null && v !== undefined);
+    const vals = steadyData.map((d) => getVal(d as unknown as Record<string, unknown>, cacheKey)).filter((v): v is number => v !== null);
     return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
-  }, [data]);
+  }, [steadyData, cacheKey]);
 
   const avgNoCache = useMemo(() => {
-    const vals = data.map((d) => d.noCache).filter((v): v is number => v !== null && v !== undefined);
+    const vals = steadyData.map((d) => getVal(d as unknown as Record<string, unknown>, noCacheKey)).filter((v): v is number => v !== null);
     return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
-  }, [data]);
+  }, [steadyData, noCacheKey]);
 
   const avgCacheRps = useMemo(() => {
-    const vals = data.map((d) => d.cacheRps).filter((v): v is number => v !== undefined);
+    const vals = steadyData.map((d) => d.cacheRps).filter((v): v is number => v !== undefined);
     return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 0;
-  }, [data]);
+  }, [steadyData]);
 
   const avgNoCacheRps = useMemo(() => {
-    const vals = data.map((d) => d.noCacheRps).filter((v): v is number => v !== undefined);
+    const vals = steadyData.map((d) => d.noCacheRps).filter((v): v is number => v !== undefined);
     return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 0;
-  }, [data]);
+  }, [steadyData]);
 
   if (data.length === 0) return null;
 
@@ -116,7 +143,7 @@ export function LatencyChart({ data, activeLine, hoveredPoint }: { data: Latency
               width={60}
               label={{ value: "ms", angle: -90, position: "insideLeft", offset: 4, style: { fontSize: 10, fill: "#a1a1aa", fontWeight: 600 } }}
             />
-            <Tooltip content={<CustomTooltip />} />
+            <Tooltip content={<CustomTooltip percentile={percentile} />} />
             <ReferenceLine
               x={activeLine ?? -999}
               stroke="rgba(255,255,255,0.35)"
@@ -124,7 +151,7 @@ export function LatencyChart({ data, activeLine, hoveredPoint }: { data: Latency
             />
             <Area
               type="monotone"
-              dataKey="noCache"
+              dataKey={noCacheKey}
               name="No Cache"
               stroke="#ef4444"
               fill="#ef4444"
@@ -135,7 +162,7 @@ export function LatencyChart({ data, activeLine, hoveredPoint }: { data: Latency
             />
             <Area
               type="monotone"
-              dataKey="cacheHit"
+              dataKey={cacheKey}
               name="Cache Hit"
               stroke="#22c55e"
               fill="#22c55e"
@@ -156,7 +183,7 @@ export function LatencyChart({ data, activeLine, hoveredPoint }: { data: Latency
               <span className="h-2 w-2 rounded-sm bg-green-500/70" />
               <span className="text-zinc-300">Cache Hit</span>
               <span className="ml-auto tabular-nums">
-                {hoveredPoint.cacheHit != null ? fmt_ms(hoveredPoint.cacheHit) : "—"}
+                {getVal(hoveredPoint as unknown as Record<string, unknown>, cacheKey) != null ? fmt_ms(getVal(hoveredPoint as unknown as Record<string, unknown>, cacheKey)!) : "—"}
               </span>
             </div>
             {hoveredPoint.cacheRps != null && (
@@ -168,7 +195,7 @@ export function LatencyChart({ data, activeLine, hoveredPoint }: { data: Latency
               <span className="h-2 w-2 rounded-sm bg-red-500/70" />
               <span className="text-zinc-300">No Cache</span>
               <span className="ml-auto tabular-nums">
-                {hoveredPoint.noCache != null ? fmt_ms(hoveredPoint.noCache) : "—"}
+                {getVal(hoveredPoint as unknown as Record<string, unknown>, noCacheKey) != null ? fmt_ms(getVal(hoveredPoint as unknown as Record<string, unknown>, noCacheKey)!) : "—"}
               </span>
             </div>
             {hoveredPoint.noCacheRps != null && (

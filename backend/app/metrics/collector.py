@@ -13,13 +13,14 @@ class Sample:
     error: str | None = None
 
 
-def _percentile(sorted_values: list[float], p: int) -> float:
-    if not sorted_values:
+def _percentile(values: list[float], p: int) -> float:
+    if not values:
         return 0.0
+    sorted_values = sorted(values)
     if p == 50 and len(sorted_values) % 2 == 0:
         m = len(sorted_values) // 2
         return (sorted_values[m - 1] + sorted_values[m]) / 2
-    k = len(sorted_values) * p // 100
+    k = min(len(sorted_values) * p // 100, len(sorted_values) - 1)
     return sorted_values[k]
 
 
@@ -53,8 +54,12 @@ class MetricsCollector:
         return {
             "t": t,
             "cacheHit": round(_percentile(cache_hit_ok, 50), 2) if cache_hit_ok else None,
+            "cacheHit_p95": round(_percentile(cache_hit_ok, 95), 2) if cache_hit_ok else None,
+            "cacheHit_p99": round(_percentile(cache_hit_ok, 99), 2) if cache_hit_ok else None,
             "cacheMissRate": round(len(cache_miss_ok) / known_status * 100, 1) if known_status > 0 else None,
             "noCache": round(_percentile(uncached_ok_ms, 50), 2) if uncached_ok_ms else None,
+            "noCache_p95": round(_percentile(uncached_ok_ms, 95), 2) if uncached_ok_ms else None,
+            "noCache_p99": round(_percentile(uncached_ok_ms, 99), 2) if uncached_ok_ms else None,
             "cachePct": round(len(cached_err) / cached_total * 100, 1) if cached_total > 0 else None,
             "noCachePct": round(len(uncached_err) / uncached_total * 100, 1) if uncached_total > 0 else None,
             "cacheCount": len(cached_ok),
