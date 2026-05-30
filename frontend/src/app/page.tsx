@@ -31,10 +31,10 @@ export default function Home() {
               href="/simulate"
             />
             <FeatureCard
-              title="Analyze"
-              description="Review latency, throughput, and errors in real-time charts."
+              title="History"
+              description="Browse past runs, compare results, and review AI analysis."
               icon="chart"
-              href="/analyze"
+              href="/history"
             />
           </div>
         </div>

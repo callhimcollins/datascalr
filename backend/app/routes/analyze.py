@@ -7,6 +7,8 @@ import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from ..supabase_client import update
+
 router = APIRouter()
 
 SYSTEM_PROMPT = """You are a load-testing analyst. You receive metrics from a simulation that compared cached (Redis) vs uncached (PostgreSQL direct) latency for a web API under concurrent virtual users.
@@ -59,6 +61,7 @@ class AnalysisRequest(BaseModel):
     cache_weight: float = 0.5
     no_cache_weight: float = 0.5
     total_throughput: int | None = None
+    run_id: str | None = None
 
 
 @router.post("/api/analyze-run")
@@ -118,7 +121,15 @@ async def analyze_run(req: AnalysisRequest):
             text = body["choices"][0]["message"]["content"].strip()
 
         data = json.loads(text)
-        return {"why": data.get("why", ""), "recommendation": data.get("recommendation", "")}
+        analysis = {"why": data.get("why", ""), "recommendation": data.get("recommendation", "")}
+
+        if req.run_id:
+            try:
+                await update("simulation_runs", "id", req.run_id, {"analysis": analysis})
+            except Exception:
+                pass  # best-effort persistence
+
+        return analysis
 
     except json.JSONDecodeError:
         raise HTTPException(status_code=502, detail="AI returned invalid JSON")

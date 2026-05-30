@@ -13,6 +13,7 @@ function SimulateInner() {
   const concurrency = searchParams.get("concurrency") ?? "10";
   const rampUp = searchParams.get("rampUp") ?? "5";
   const duration = searchParams.get("duration") ?? "30";
+  const profileLabel = searchParams.get("profile") ?? "";
 
   const { sim } = useSim();
   const [error, setError] = useState<string | null>(null);
@@ -61,6 +62,8 @@ function SimulateInner() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          parent_id: sim.parentId,
+          profile_label: profileLabel,
           base_url: sim.baseUrl,
           endpoints: sim.endpoints,
           concurrency: Number(concurrency),
@@ -191,6 +194,7 @@ function SimulateInner() {
         cache_weight: totalWeight > 0 ? cacheWeight / totalWeight : 0.5,
         no_cache_weight: totalWeight > 0 ? noCacheWeight / totalWeight : 0.5,
         total_throughput: steady.reduce((s, d) => s + (d.cacheRps ?? 0) + (d.noCacheRps ?? 0), 0),
+        run_id: runId,
       }),
     })
       .then((r) => r.json().then((d) => { setAiAnalysis(d); setAiLoading(false); }).catch(() => setAiLoading(false)))
