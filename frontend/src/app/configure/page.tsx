@@ -97,6 +97,7 @@ function ConfigureInner() {
 
     setSim({
       baseUrl: generatedConfig.base_url,
+      parentId: generatedConfig.parent_id,
       endpoints: profile.endpoints.map((ep) => ({
         method: ep.method,
         path: ep.path,
@@ -109,6 +110,7 @@ function ConfigureInner() {
       concurrency: form.concurrency || "1",
       rampUp: form.rampUp || "0",
       duration: form.duration || "1",
+      profile: profile.label,
     });
     router.push(`/simulate?${qs.toString()}`);
   }

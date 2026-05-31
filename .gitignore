@@ -28,6 +28,12 @@ Thumbs.db
 
 # Claude Code
 .claude/
+.agents/
+.mcp.json
+skills-lock.json
+
+# Dev findings
+findings/
 
 # Simulation run data
 simulation_runs/

@@ -10,6 +10,7 @@ export type SimEndpoint = {
 
 type SimState = {
   baseUrl: string;
+  parentId: string;
   endpoints: SimEndpoint[];
 };
 
@@ -27,6 +28,7 @@ export type Profile = {
 };
 
 export type FullConfig = {
+  parent_id: string;
   base_url: string;
   profiles: Profile[];
 };

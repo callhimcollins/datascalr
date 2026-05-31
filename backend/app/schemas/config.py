@@ -30,5 +30,6 @@ class GenerateConfigRequest(BaseModel):
 
 
 class GenerateConfigResponse(BaseModel):
+    parent_id: str
     base_url: str
     profiles: list[Profile]
