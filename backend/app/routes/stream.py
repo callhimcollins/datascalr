@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from .runs import active_runs
+from .runs import active_runs, stop_events
 from ..engine import run_engine
 from ..metrics.analysis import analyze
 from ..metrics.collector import MetricsCollector
@@ -62,6 +62,9 @@ async def stream_run(run_id: str, request: Request):
     vu_tasks: list[asyncio.Task] = []
 
     async def event_stream():
+        stop_events[run_id] = stop_event
+        was_stopped = False
+
         engine_task = asyncio.create_task(
             run_engine(config, collector, stop_event, vu_tasks)
         )
@@ -71,7 +74,9 @@ async def stream_run(run_id: str, request: Request):
 
         try:
             for t in range(1, config["duration"] + 1):
-                if await request.is_disconnected():
+                if await request.is_disconnected() or stop_event.is_set():
+                    if stop_event.is_set():
+                        was_stopped = True
                     stop_event.set()
                     break
 
@@ -83,6 +88,7 @@ async def stream_run(run_id: str, request: Request):
                 history.append(bucket)
                 yield f"data: {json.dumps(bucket)}\n\n"
         finally:
+            stop_events.pop(run_id, None)
             stop_event.set()
 
             for task in vu_tasks:
@@ -100,13 +106,14 @@ async def stream_run(run_id: str, request: Request):
                 except asyncio.CancelledError:
                     pass
 
-            run["status"] = "completed"
+            status_label = "stopped" if was_stopped else "completed"
+            run["status"] = status_label
 
             # Compute and persist to Supabase
             result = _compute_comparison(run["metrics"], config)
             try:
                 await update("simulation_runs", "id", run_id, {
-                    "status": "completed",
+                    "status": status_label,
                     "metrics": run["metrics"],
                     "avg_cache_ms": result["avg_cache_ms"],
                     "avg_no_cache_ms": result["avg_no_cache_ms"],
@@ -120,6 +127,6 @@ async def stream_run(run_id: str, request: Request):
 
             # Send final summary
             comparison = result["comparison"]
-            yield f"data: {json.dumps({'done': True, 'comparison': comparison})}\n\n"
+            yield f"data: {json.dumps({'done': True, 'stopped': was_stopped, 'comparison': comparison})}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

@@ -13,11 +13,13 @@ export function RunningView({
   elapsed,
   progress,
   isComplete,
+  isStopped,
   comparison,
   aiAnalysis,
   aiLoading,
   onRunAgain,
   onConfigure,
+  onStop,
   runKey,
 }: {
   latencyHistory: LatencyPoint[];
@@ -27,11 +29,13 @@ export function RunningView({
   elapsed: number;
   progress: number;
   isComplete: boolean;
+  isStopped: boolean;
   comparison: Comparison | null;
   aiAnalysis: { why: string; recommendation: string } | null;
   aiLoading: boolean;
   onRunAgain: () => void;
   onConfigure: () => void;
+  onStop: () => void;
   runKey?: number;
 }) {
   const totalDuration = Number(duration);
@@ -60,13 +64,13 @@ export function RunningView({
 
   return (
     <div className="mt-2 space-y-4 pb-8 md:pb-12">
-      {/* Progress bar — smoothly shrinks when complete */}
+      {/* Progress bar — shows stop btn during run, retry btn when stopped/complete */}
       <div className="glass-card rounded-lg px-4 py-3">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
-            <span className={`h-2 w-2 rounded-full ${isComplete ? "bg-zinc-400" : "bg-green-500 animate-pulse"}`} />
+            <span className={`h-2 w-2 rounded-full ${isStopped ? "bg-amber-400" : isComplete ? "bg-zinc-400" : "bg-green-500 animate-pulse"}`} />
             <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-              {isComplete ? "Complete" : "Running"}
+              {isStopped ? "Stopped" : isComplete ? "Complete" : "Running"}
             </span>
           </div>
           <span className="text-sm tabular-nums text-zinc-500">
@@ -74,33 +78,42 @@ export function RunningView({
           </span>
         </div>
 
-        {/* Bar + retry row — bar smoothly makes room for retry icon when complete */}
+        {/* Bar + stop/retry row */}
         <div className="flex items-center gap-2">
           <div
             className="rounded-full bg-zinc-200 dark:bg-zinc-700 overflow-hidden transition-[width] duration-200 ease-in-out"
-            style={{ width: isComplete ? "calc(100% - 3rem)" : "100%" }}
+            style={{ width: isComplete ? "calc(100% - 3rem)" : "calc(100% - 3rem)" }}
           >
             <div
               key={runKey}
-              className="h-2 rounded-full bg-amber-500 transition-[width] duration-200 ease-in-out"
+              className={`h-2 rounded-full transition-[width] duration-200 ease-in-out ${isStopped ? "bg-amber-400" : "bg-amber-500"}`}
               style={{ width: isComplete ? "100%" : `${progress}%` }}
             />
           </div>
-          <div
-            className="transition-all duration-500 ease-in-out overflow-hidden flex items-center justify-center shrink-0"
-            style={{ width: isComplete ? "2.5rem" : "0", opacity: isComplete ? 1 : 0 }}
-          >
-            <button
-              onClick={onRunAgain}
-              className="h-8 w-8 flex items-center justify-center rounded-lg border border-zinc-300 dark:border-zinc-600 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors shrink-0"
-              title="Run again"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="23 4 23 10 17 10" />
-                <polyline points="1 20 1 14 7 14" />
-                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-              </svg>
-            </button>
+          <div className="flex items-center justify-center shrink-0 w-10">
+            {isComplete ? (
+              <button
+                onClick={onRunAgain}
+                className="h-8 w-8 flex items-center justify-center rounded-lg border border-zinc-300 dark:border-zinc-600 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors shrink-0"
+                title="Run again"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="23 4 23 10 17 10" />
+                  <polyline points="1 20 1 14 7 14" />
+                  <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+                </svg>
+              </button>
+            ) : (
+              <button
+                onClick={onStop}
+                className="h-8 w-8 flex items-center justify-center rounded-lg border border-red-400/60 text-red-500 hover:bg-red-500/10 transition-colors shrink-0"
+                title="Stop run"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="4" y="4" width="16" height="16" rx="2" />
+                </svg>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -170,16 +183,9 @@ export function RunningView({
             </span>
           </div>
           <div className="h-[280px]">
-            <LatencyChart data={latencyHistory} rampUp={Number(rampUp)} percentile={percentile} activeLine={hoveredEvent?.t ?? null} hoveredPoint={hoveredEvent?.chart === "latency" ? hoveredPoint : null} />
+            <LatencyChart data={latencyHistory} percentile={percentile} activeLine={hoveredEvent?.t ?? null} hoveredPoint={hoveredEvent?.chart === "latency" ? hoveredPoint : null} />
           </div>
-          {latencyHistory.some(
-            (d) =>
-              (d.noCachePct != null && d.noCachePct > 0) ||
-              (d.cachePct != null && d.cachePct > 0) ||
-              (d.cacheMissRate != null && d.cacheMissRate > 0),
-          ) && (
-            <>
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1.5 mb-0.5 shrink-0 border-t border-zinc-700/30 pt-1.5">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1.5 mb-0.5 shrink-0 border-t border-zinc-700/30 pt-1.5">
                 <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">
                   Errors
                 </span>
@@ -199,8 +205,6 @@ export function RunningView({
               <div className="shrink-0 h-[150px]">
                 <ErrorChart data={latencyHistory} activeLine={hoveredEvent?.t ?? null} hoveredPoint={hoveredEvent?.chart === "errors" ? hoveredPoint : null} />
               </div>
-            </>
-          )}
         </div>
         <div className="w-full lg:w-80 glass-card rounded-lg border border-zinc-200 dark:border-0 px-5 py-4 lg:h-[420px] h-[200px] flex flex-col">
           <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide mb-2 shrink-0">
@@ -302,7 +306,7 @@ export function RunningView({
         </div>
       )}
 
-      {/* Configure — full width at bottom */}
+      {/* Configure — full width at bottom, shown when stopped or completed */}
       {isComplete && (
         <button
           onClick={onConfigure}

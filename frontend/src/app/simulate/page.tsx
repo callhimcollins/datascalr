@@ -26,7 +26,7 @@ function SimulateInner() {
   const startedAtRef = useRef<number | null>(null);
 
   const sseUrl = runId ? `${API_BASE}/api/runs/${runId}/stream` : null;
-  const { data: latencyHistory, isComplete: sseComplete, comparison: sseComparison } = useSSE(sseUrl);
+  const { data: latencyHistory, isComplete: sseComplete, isStopped, comparison: sseComparison } = useSSE(sseUrl);
   const isComplete = sseComplete || autoComplete;
   const [aiAnalysis, setAiAnalysis] = useState<{ why: string; recommendation: string } | null>(null);
 
@@ -119,13 +119,25 @@ function SimulateInner() {
     router.push(`/configure?${qs.toString()}`);
   }, [router, sim, platform, concurrency, rampUp, duration]);
 
+  const handleStop = useCallback(async () => {
+    if (!runId) return;
+    try {
+      await fetch(`${API_BASE}/api/runs/${runId}/stop`, { method: "POST" });
+    } catch {
+      // best-effort — the stream will detect disconnect anyway
+    }
+  }, [runId]);
+
   // Timer management
+  const isCompleteRef = useRef(isComplete);
+  isCompleteRef.current = isComplete;
   useEffect(() => {
     if (!runId) return;
 
     startedAtRef.current = Date.now();
 
     const timer = setInterval(() => {
+      if (isCompleteRef.current) return;
       setElapsed((prev) => prev + 1);
     }, 1000);
 
@@ -156,6 +168,15 @@ function SimulateInner() {
       clearTimeout(fallbackTimeout);
     };
   }, [runId, duration]);
+
+  // Stop the elapsed counter when the run stops via SSE
+  useEffect(() => {
+    if (!isComplete) return;
+    if (startedAtRef.current) {
+      const pct = Math.min(100, ((Date.now() - startedAtRef.current) / (Number(duration) * 1000)) * 100);
+      setProgress(pct);
+    }
+  }, [isComplete, duration]);
 
   // AI analysis after run completes
   const steadyN = Number(rampUp) || 0;
@@ -236,11 +257,13 @@ function SimulateInner() {
             elapsed={elapsed}
             progress={progress}
             isComplete={isComplete}
+            isStopped={isStopped}
             comparison={comparison}
             aiAnalysis={aiAnalysis}
             aiLoading={aiLoading}
             onRunAgain={handleRunAgain}
             onConfigure={handleConfigure}
+            onStop={handleStop}
             runKey={runKey}
           />
         )}

@@ -63,14 +63,7 @@ export function ErrorChart({ data, activeLine, hoveredPoint }: { data: LatencyPo
     return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
   }, [data]);
 
-  const hasErrors = data.some(
-    (d) =>
-      (d.noCachePct != null && d.noCachePct > 0) ||
-      (d.cachePct != null && d.cachePct > 0) ||
-      (d.cacheMissRate != null && d.cacheMissRate > 0),
-  );
-
-  if (data.length === 0 || !hasErrors) return null;
+  if (data.length === 0) return null;
 
   return (
     <div className="flex flex-col h-full relative">

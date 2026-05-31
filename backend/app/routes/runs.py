@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 
 from fastapi import APIRouter, HTTPException
@@ -9,6 +10,8 @@ router = APIRouter()
 
 # In-memory cache for active run metrics during streaming
 active_runs: dict[str, dict] = {}
+# Shared stop events so the stop endpoint can signal running streams
+stop_events: dict[str, asyncio.Event] = {}
 
 
 @router.post("/api/runs", response_model=StartRunResponse)
@@ -63,6 +66,18 @@ async def get_parent(parent_id: str):
     if not row:
         raise HTTPException(status_code=404, detail="Parent not found")
     return row
+
+
+@router.post("/api/runs/{run_id}/stop")
+async def stop_run(run_id: str):
+    run = active_runs.get(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    event = stop_events.get(run_id)
+    if not event:
+        raise HTTPException(status_code=409, detail="Run is not currently streaming")
+    event.set()
+    return {"stopped": run_id}
 
 
 @router.delete("/api/runs/{run_id}")

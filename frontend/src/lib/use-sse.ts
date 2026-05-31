@@ -24,17 +24,20 @@ type RawSSEMessage = {
   noCacheRps?: number;
   events?: { level: string; chart?: string; msg: string }[];
   done?: boolean;
+  stopped?: boolean;
   comparison?: Comparison;
 };
 
 export function useSSE(url: string | null): {
   data: LatencyPoint[];
   isComplete: boolean;
+  isStopped: boolean;
   error: string | null;
   comparison: Comparison | null;
 } {
   const [data, setData] = useState<LatencyPoint[]>([]);
   const [isComplete, setIsComplete] = useState(false);
+  const [isStopped, setIsStopped] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [comparison, setComparison] = useState<Comparison | null>(null);
   const esRef = useRef<EventSource | null>(null);
@@ -44,6 +47,7 @@ export function useSSE(url: string | null): {
 
     setData([]);
     setIsComplete(false);
+    setIsStopped(false);
     setError(null);
     setComparison(null);
 
@@ -56,6 +60,9 @@ export function useSSE(url: string | null): {
         if (msg.done) {
           if (msg.comparison) {
             setComparison(msg.comparison);
+          }
+          if (msg.stopped) {
+            setIsStopped(true);
           }
           setIsComplete(true);
           es.close();
@@ -77,5 +84,5 @@ export function useSSE(url: string | null): {
     };
   }, [url]);
 
-  return { data, isComplete, error, comparison };
+  return { data, isComplete, isStopped, error, comparison };
 }

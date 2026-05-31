@@ -36,8 +36,8 @@ export type LatencyPoint = {
   events?: LogEvent[];
 };
 
-function fmt_ms(v: number): string {
-  return v < 1 ? `${v.toFixed(2)} ms` : `${v.toFixed(1)} ms`;
+function fmt_ms(v: number | null): string {
+  return v == null ? "— ms" : v < 1 ? `${v.toFixed(2)} ms` : `${v.toFixed(1)} ms`;
 }
 
 function getCacheKey(percentile: string): string {
@@ -91,34 +91,29 @@ function CustomTooltip({ active, payload, label, percentile }: Record<string, un
   );
 }
 
-export function LatencyChart({ data, activeLine, hoveredPoint, rampUp, percentile = "p50" }: { data: LatencyPoint[]; activeLine?: number | null; hoveredPoint?: LatencyPoint | null; rampUp?: number; percentile?: "p50" | "p95" | "p99" }) {
+export function LatencyChart({ data, activeLine, hoveredPoint, percentile = "p50" }: { data: LatencyPoint[]; activeLine?: number | null; hoveredPoint?: LatencyPoint | null; rampUp?: number; percentile?: "p50" | "p95" | "p99" }) {
   const cacheKey = percentile === "p50" ? "cacheHit" : `cacheHit_${percentile}`;
   const noCacheKey = percentile === "p50" ? "noCache" : `noCache_${percentile}`;
 
-  const steadyData = useMemo(() => {
-    if (rampUp == null || rampUp < 1) return data;
-    return data.filter((d) => d.t >= rampUp + 1);
-  }, [data, rampUp]);
-
   const avgCacheHit = useMemo(() => {
-    const vals = steadyData.map((d) => getVal(d as unknown as Record<string, unknown>, cacheKey)).filter((v): v is number => v !== null);
-    return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
-  }, [steadyData, cacheKey]);
+    const vals = data.map((d) => getVal(d as unknown as Record<string, unknown>, cacheKey)).filter((v): v is number => v !== null);
+    return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+  }, [data, cacheKey]);
 
   const avgNoCache = useMemo(() => {
-    const vals = steadyData.map((d) => getVal(d as unknown as Record<string, unknown>, noCacheKey)).filter((v): v is number => v !== null);
-    return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
-  }, [steadyData, noCacheKey]);
+    const vals = data.map((d) => getVal(d as unknown as Record<string, unknown>, noCacheKey)).filter((v): v is number => v !== null);
+    return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+  }, [data, noCacheKey]);
 
   const avgCacheRps = useMemo(() => {
-    const vals = steadyData.map((d) => d.cacheRps).filter((v): v is number => v !== undefined);
-    return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 0;
-  }, [steadyData]);
+    const vals = data.map((d) => d.cacheRps).filter((v): v is number => v !== undefined);
+    return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
+  }, [data]);
 
   const avgNoCacheRps = useMemo(() => {
-    const vals = steadyData.map((d) => d.noCacheRps).filter((v): v is number => v !== undefined);
-    return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 0;
-  }, [steadyData]);
+    const vals = data.map((d) => d.noCacheRps).filter((v): v is number => v !== undefined);
+    return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
+  }, [data]);
 
   if (data.length === 0) return null;
 
@@ -210,16 +205,16 @@ export function LatencyChart({ data, activeLine, hoveredPoint, rampUp, percentil
         <span className="flex items-center gap-1.5">
           <span className="h-2 w-2 rounded-sm bg-green-500/60" />
           <span className="text-zinc-400">Hit:</span>
-          <span className="font-mono tabular-nums text-green-400">{fmt_ms(avgCacheHit)}</span>
+          <span className="font-mono tabular-nums text-green-400">{avgCacheHit != null ? fmt_ms(avgCacheHit) : "—"}</span>
           <span className="text-zinc-500">·</span>
-          <span className="font-mono tabular-nums text-zinc-400">{avgCacheRps > 0 ? `${avgCacheRps} rps` : "— rps"}</span>
+          <span className="font-mono tabular-nums text-zinc-400">{avgCacheRps != null ? `${avgCacheRps} rps` : "— rps"}</span>
         </span>
         <span className="flex items-center gap-1.5">
           <span className="h-2 w-2 rounded-sm bg-red-500/60" />
           <span className="text-zinc-400">No Cache:</span>
-          <span className="font-mono tabular-nums text-red-400">{fmt_ms(avgNoCache)}</span>
+          <span className="font-mono tabular-nums text-red-400">{avgNoCache != null ? fmt_ms(avgNoCache) : "—"}</span>
           <span className="text-zinc-500">·</span>
-          <span className="font-mono tabular-nums text-zinc-400">{avgNoCacheRps > 0 ? `${avgNoCacheRps} rps` : "— rps"}</span>
+          <span className="font-mono tabular-nums text-zinc-400">{avgNoCacheRps != null ? `${avgNoCacheRps} rps` : "— rps"}</span>
         </span>
       </div>
     </div>
