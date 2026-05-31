@@ -57,6 +57,14 @@ async def list_parents():
     return rows
 
 
+@router.get("/api/parents/{parent_id}")
+async def get_parent(parent_id: str):
+    row = await get("simulation_parents", "id", parent_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Parent not found")
+    return row
+
+
 @router.delete("/api/runs/{run_id}")
 async def delete_run(run_id: str):
     existing = await get("simulation_runs", "id", run_id)

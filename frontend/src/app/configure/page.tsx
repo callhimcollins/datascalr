@@ -1,7 +1,7 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BackButton } from "@/components/BackButton";
 import { Card, CardContent } from "@/components/ui/card";
@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { API_BASE } from "@/lib/api";
-import { useSim, type FullConfig } from "@/lib/simulation-context";
+import { useSim, type FullConfig, type Profile } from "@/lib/simulation-context";
 
 function StepIndicator({ step }: { step: number }) {
   return (
@@ -27,11 +27,17 @@ function ConfigureInner() {
   const params = useSearchParams();
   const { setSim } = useSim();
 
+  const parentId = params.get("parentId");
+
   const [step, setStep] = useState(1);
   const [generatedConfig, setGeneratedConfig] = useState<FullConfig | null>(null);
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
   const [selectedProfile, setSelectedProfile] = useState<number | null>(null);
+
+  const [parentData, setParentData] = useState<{ label: string; base_url: string; profiles: Profile[] } | null>(null);
+  const [originalPlatform, setOriginalPlatform] = useState<string | null>(null);
+  const [loadingParent, setLoadingParent] = useState(!!parentId);
 
   const [form, setForm] = useState({
     platform: params.get("platform") ?? "",
@@ -40,7 +46,25 @@ function ConfigureInner() {
     duration: params.get("duration") ?? "30",
   });
 
+  // Fetch parent data when reconfigure mode
+  useEffect(() => {
+    if (parentId) {
+      fetch(`${API_BASE}/api/parents/${parentId}`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (data?.label) {
+            setParentData(data);
+            setOriginalPlatform(data.label);
+            setForm((prev) => ({ ...prev, platform: data.label }));
+          }
+          setLoadingParent(false);
+        })
+        .catch(() => setLoadingParent(false));
+    }
+  }, [parentId]);
+
   const valid = form.platform.trim().length > 0;
+  const platformChanged = originalPlatform !== null && form.platform.trim() !== originalPlatform;
 
   function setNum(key: "concurrency" | "rampUp" | "duration", raw: string) {
     if (raw === "") {
@@ -55,6 +79,19 @@ function ConfigureInner() {
 
   async function handleNext() {
     if (!valid) return;
+
+    // Reconfigure mode — platform unchanged, reuse existing parent
+    if (parentData && !platformChanged && parentId) {
+      setGeneratedConfig({
+        parent_id: parentId,
+        base_url: parentData.base_url,
+        profiles: parentData.profiles,
+      });
+      setSelectedProfile(null);
+      setStep(2);
+      return;
+    }
+
     setGenerating(true);
     setGenError(null);
 
@@ -121,7 +158,7 @@ function ConfigureInner() {
         <BackButton />
 
         <h1 className="mt-6 text-4xl font-bold tracking-tight text-foreground">
-          Configure
+          {parentData ? "Reconfigure" : "Configure"}
         </h1>
 
         <StepIndicator step={step} />
@@ -130,7 +167,9 @@ function ConfigureInner() {
         {step === 1 && (
           <>
             <p className="mb-10 text-sm font-semibold text-muted-foreground">
-              Describe your REST API — DataScalr handles the rest.
+              {parentData
+                ? "Tweak your config — changes to the description will create a new group in history."
+                : "Describe your REST API — DataScalr handles the rest."}
             </p>
             <form
               onSubmit={(e) => {
@@ -152,6 +191,17 @@ function ConfigureInner() {
                       }
                       className="field-sizing-content"
                     />
+                    {platformChanged && (
+                      <div className="rounded border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                        Changing the description will create a <strong>new group</strong> in history — previous runs under this configuration won&apos;t be grouped with future ones.
+                      </div>
+                    )}
+                    {loadingParent && (
+                      <div className="flex items-center gap-1.5 text-xs text-zinc-400">
+                        <span className="h-3 w-3 rounded-full border-2 border-zinc-400 border-t-transparent animate-spin" />
+                        Loading previous config...
+                      </div>
+                    )}
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
@@ -193,7 +243,7 @@ function ConfigureInner() {
 
                   <Button
                     type="submit"
-                    disabled={!valid || generating}
+                    disabled={!valid || generating || loadingParent}
                     className="!mt-6 w-full cursor-pointer bg-gradient-to-r from-amber-600 to-orange-600 text-white hover:from-amber-500 hover:to-orange-500 disabled:opacity-40 disabled:pointer-events-auto disabled:cursor-not-allowed disabled:hover:from-amber-600 disabled:hover:to-orange-600 shadow-sm hover:shadow-md hover:shadow-amber-600/20 transition-all border-0"
                     size="lg"
                   >
@@ -215,9 +265,15 @@ function ConfigureInner() {
         {/* ── Step 2: Profile Picker ── */}
         {step === 2 && generatedConfig && (
           <div className="space-y-6">
-            <p className="text-sm font-semibold text-muted-foreground">
-              Choose a traffic profile for your simulation.
-            </p>
+            {parentData && !platformChanged ? (
+              <p className="text-sm font-semibold text-muted-foreground">
+                Run additional simulations under the same configuration group.
+              </p>
+            ) : (
+              <p className="text-sm font-semibold text-muted-foreground">
+                Choose a traffic profile for your simulation.
+              </p>
+            )}
 
             {/* Run params summary */}
             <div className="grid grid-cols-3 gap-3">

@@ -109,9 +109,15 @@ function SimulateInner() {
 
   const router = useRouter();
   const handleConfigure = useCallback(() => {
-    const qs = new URLSearchParams({ platform, concurrency, rampUp, duration });
+    const qs = new URLSearchParams({
+      platform,
+      concurrency,
+      rampUp,
+      duration,
+      ...(sim?.parentId ? { parentId: sim.parentId } : {}),
+    });
     router.push(`/configure?${qs.toString()}`);
-  }, [router, platform, concurrency, rampUp, duration]);
+  }, [router, sim, platform, concurrency, rampUp, duration]);
 
   // Timer management
   useEffect(() => {
