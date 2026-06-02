@@ -87,7 +87,7 @@ async def stream_run(run_id: str, request: Request):
                 }
                 if config.get("mode") == "rate_limiting":
                     persist_fields["avg_rps"] = result.get("avg_rps")
-                    persist_fields["avg_throttled_pct"] = result.get("avg_throttled_pct")
+                    persist_fields["avg_rl_pct"] = result.get("avg_rl_pct")
                     persist_fields["peak_rps"] = result.get("peak_rps")
                 else:
                     persist_fields["avg_cache_ms"] = result.get("avg_cache_ms")

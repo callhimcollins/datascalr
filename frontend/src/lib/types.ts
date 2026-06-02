@@ -48,7 +48,7 @@ export type LatencyPoint = {
   noCacheRps?: number;
   rateLimited?: number;
   rateLimitedPct?: number;
-  throttledVus?: number;
+  rateLimitedVus?: number;
   totalRps?: number;
   events?: LogEvent[];
 };
@@ -58,9 +58,9 @@ export type RateLimitComparison = {
   avg_rps: number;
   peak_rps: number;
   rate_limit_ceiling: number;
-  avg_throttled_pct: number;
+  avg_rl_pct: number;
   avg_rps_pct_of_ceiling: number;
-  total_throttled: number;
+  total_rate_limited: number;
   total_passed: number;
 };
 

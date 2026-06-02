@@ -27,9 +27,6 @@ async def start_run(req: StartRunRequest):
         "duration": req.duration,
         "mode": req.mode,
         "rate_limit_rps": req.rate_limit_rps,
-        "base_url": req.base_url,
-        "endpoints": req.endpoints,
-        "platform": req.platform,
     }
     await insert("simulation_runs", run_data)
     active_runs[run_id] = {
