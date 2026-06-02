@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import { RpsChart } from "@/components/RpsChart";
 import { API_BASE } from "@/lib/api";
 import { LatencyChart } from "@/components/LatencyChart";
 import { ErrorChart } from "@/components/ErrorChart";
@@ -183,7 +184,11 @@ export default function RunDetailPage() {
               )}
             </div>
             <div className="flex-1 min-h-0">
-              <LatencyChart data={metrics} rampUp={rampUp} percentile={percentile} activeLine={hoveredEvent?.t ?? null} hoveredPoint={hoveredEvent?.chart === "latency" ? hoveredPoint : null} />
+              {isRateLimit ? (
+                <RpsChart data={metrics} />
+              ) : (
+                <LatencyChart data={metrics} rampUp={rampUp} percentile={percentile} activeLine={hoveredEvent?.t ?? null} hoveredPoint={hoveredEvent?.chart === "latency" ? hoveredPoint : null} />
+              )}
             </div>
           </div>
 
