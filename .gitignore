@@ -37,3 +37,4 @@ findings/
 
 # Simulation run data
 simulation_runs/
+backend.log

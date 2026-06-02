@@ -197,7 +197,7 @@ def _detect_rate_limiting(t: int, bucket: dict, config: dict, state: dict, event
         events.append({
             "level": "warn",
             "chart": "rate_limit",
-            "msg": f"Rate limit saturated: {rl_pct:.0f}% of requests returning 429 ({rl_count}/{total_rps_bucket} req/s, {rl_vus} VUs affected). API rejecting requests over {rate_limit_rps} req/s per user.",
+            "msg": f"Rate limit saturated: {rl_pct:.0f}% of requests returning 429 ({rl_count}/{total_rps_bucket} req/s, {rl_vus} VUs affected). API rejecting requests over {rate_limit_rps} req/s per VU.",
         })
         state["rl_level"] = "saturated"
 

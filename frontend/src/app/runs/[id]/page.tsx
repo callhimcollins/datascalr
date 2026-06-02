@@ -134,7 +134,7 @@ export default function RunDetailPage() {
             { label: "Ramp-up", value: config?.ramp_up ? `${config.ramp_up}s` : null },
             { label: "Duration", value: config?.duration ? `${config.duration}s` : null },
             { label: "Started", value: config?.started_at ? fmtDate(config.started_at) : null, small: true },
-            ...(isRateLimit && config?.rate_limit_rps ? [{ label: "Ceiling", value: `${config.rate_limit_rps} rps`, small: true }] : []),
+            ...(isRateLimit && config?.rate_limit_rps ? [{ label: "Ceiling (per VU)", value: `${config.rate_limit_rps} rps`, small: true }] : []),
           ].filter((c) => c.value != null).map((c) => (
             <div key={c.label} className="glass-card rounded-lg px-3 py-2 text-center">
               <div className={`${c.small ? "text-xs" : "text-lg"} font-bold text-zinc-900 dark:text-zinc-50`}>{String(c.value)}</div>
@@ -265,9 +265,13 @@ export default function RunDetailPage() {
                   </div>
                   <div className="rounded-lg bg-zinc-100 dark:bg-zinc-800 px-2 py-2 text-center">
                     <div className="text-sm font-bold text-zinc-700 dark:text-zinc-300">{rlComparison.rate_limit_ceiling} rps</div>
-                    <div className="text-[10px] text-zinc-500 dark:text-zinc-400">Ceiling</div>
+                    <div className="text-[10px] text-zinc-500 dark:text-zinc-400">Ceiling (per VU)</div>
                   </div>
-                    </div>
+                  <div className="rounded-lg bg-zinc-100 dark:bg-zinc-800 px-2 py-2 text-center">
+                    <div className="text-sm font-bold text-zinc-700 dark:text-zinc-300">{rlComparison.total_passed + rlComparison.total_rate_limited}</div>
+                    <div className="text-[10px] text-zinc-500 dark:text-zinc-400">Total Req</div>
+                  </div>
+                </div>
                 <div className="rounded-lg bg-zinc-100 dark:bg-zinc-800 px-3 py-3">
                   <div className="text-center">
                     <div className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">
@@ -275,7 +279,7 @@ export default function RunDetailPage() {
                         ? "Ceiling was heavily hit — consider increasing the limit or optimizing endpoints"
                         : rlComparison.avg_rl_pct > 10
                         ? "Ceiling was occasionally hit — traffic near the boundary"
-                        : "Traffic stayed well within the rate limit ceiling"}
+                        : "No VUs exceeded their per-VU limit — each VU stayed within the ceiling"}
                     </div>
                     <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
                       {rlComparison.total_rate_limited} of {rlComparison.total_passed + rlComparison.total_rate_limited} requests were rate-limited

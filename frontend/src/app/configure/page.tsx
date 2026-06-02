@@ -85,11 +85,35 @@ function ConfigureInner() {
 
     // Reconfigure mode — platform unchanged, reuse existing parent
     if (parentData && !platformChanged && parentId) {
-      setGeneratedConfig({
-        parent_id: parentId,
-        base_url: parentData.base_url,
-        profiles: parentData.profiles,
-      });
+      const data = { parent_id: parentId, base_url: parentData.base_url, profiles: parentData.profiles };
+
+      if (mode === "rate_limiting" && data.profiles?.length > 0) {
+        const profile = data.profiles[0];
+        setSim({
+          baseUrl: data.base_url,
+          parentId: data.parent_id,
+          endpoints: profile.endpoints.map((ep) => ({
+            method: ep.method,
+            path: ep.path,
+            weight: ep.weight,
+          })),
+          mode: "rate_limiting",
+          rateLimitRps: Number(form.rateLimitRps) || undefined,
+        });
+        const qs = new URLSearchParams({
+          platform: form.platform,
+          concurrency: form.concurrency || "1",
+          rampUp: form.rampUp || "0",
+          duration: form.duration || "1",
+          profile: profile.label,
+          mode: "rate_limiting",
+        });
+        if (form.rateLimitRps) qs.set("rateLimitRps", form.rateLimitRps);
+        router.push(`/simulate?${qs.toString()}`);
+        return;
+      }
+
+      setGeneratedConfig(data);
       setSelectedProfile(null);
       setStep(2);
       return;
@@ -118,6 +142,34 @@ function ConfigureInner() {
       }
 
       const data: FullConfig = await res.json();
+
+      // Rate limiting mode: skip profile picker, go straight to simulation
+      if (mode === "rate_limiting" && data.profiles?.length > 0) {
+        const profile = data.profiles[0];
+        setSim({
+          baseUrl: data.base_url,
+          parentId: data.parent_id,
+          endpoints: profile.endpoints.map((ep) => ({
+            method: ep.method,
+            path: ep.path,
+            weight: ep.weight,
+          })),
+          mode: "rate_limiting",
+          rateLimitRps: Number(form.rateLimitRps) || undefined,
+        });
+        const qs = new URLSearchParams({
+          platform: form.platform,
+          concurrency: form.concurrency || "1",
+          rampUp: form.rampUp || "0",
+          duration: form.duration || "1",
+          profile: profile.label,
+          mode: "rate_limiting",
+        });
+        if (form.rateLimitRps) qs.set("rateLimitRps", form.rateLimitRps);
+        router.push(`/simulate?${qs.toString()}`);
+        return;
+      }
+
       setGeneratedConfig(data);
       setSelectedProfile(null);
       setStep(2);
@@ -323,6 +375,10 @@ function ConfigureInner() {
               <p className="text-sm font-semibold text-muted-foreground">
                 Run additional simulations under the same configuration group.
               </p>
+            ) : mode === "rate_limiting" ? (
+              <p className="text-sm font-semibold text-muted-foreground">
+                Each profile represents a different abuse pattern — the rate limiter treats all endpoints the same, but the pattern name describes what kind of traffic the VUs simulate.
+              </p>
             ) : (
               <p className="text-sm font-semibold text-muted-foreground">
                 Choose a traffic profile for your simulation.
@@ -396,29 +452,30 @@ function ConfigureInner() {
                       </span>
                     </div>
 
-                    {/* Endpoint weight bars */}
-                    <div className="mt-3 space-y-1.5">
-                      {profile.endpoints.map((ep, j) => {
-                        const pct = Math.round(ep.weight * 100);
-                        const isCached = ep.path.includes("cached=true");
-                        return (
-                          <div key={j} className="flex items-center gap-2 text-xs">
-                            <span className="w-16 shrink-0 font-mono text-zinc-500 dark:text-zinc-400">
-                              {mode === "rate_limiting" ? ep.method : (isCached ? "Cached" : "Uncached")}
-                            </span>
-                            <div className="flex-1 h-2 rounded-full bg-zinc-200 dark:bg-zinc-700 overflow-hidden">
-                              <div
-                                className={`h-full rounded-full ${mode === "rate_limiting" ? "bg-blue-500" : (isCached ? "bg-amber-500" : "bg-blue-500")}`}
-                                style={{ width: `${pct}%` }}
-                              />
+                    {mode !== "rate_limiting" && (
+                      <div className="mt-3 space-y-1.5">
+                        {profile.endpoints.map((ep, j) => {
+                          const pct = Math.round(ep.weight * 100);
+                          const isCached = ep.path.includes("cached=true");
+                          return (
+                            <div key={j} className="flex items-center gap-2 text-xs">
+                              <span className="w-16 shrink-0 font-mono text-zinc-500 dark:text-zinc-400">
+                                {isCached ? "Cached" : "Uncached"}
+                              </span>
+                              <div className="flex-1 h-2 rounded-full bg-zinc-200 dark:bg-zinc-700 overflow-hidden">
+                                <div
+                                  className={`h-full rounded-full ${isCached ? "bg-amber-500" : "bg-blue-500"}`}
+                                  style={{ width: `${pct}%` }}
+                                />
+                              </div>
+                              <span className="w-8 shrink-0 text-right font-mono text-zinc-600 dark:text-zinc-300">
+                                {pct}%
+                              </span>
                             </div>
-                            <span className="w-8 shrink-0 text-right font-mono text-zinc-600 dark:text-zinc-300">
-                              {pct}%
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </button>
                 );
               })
