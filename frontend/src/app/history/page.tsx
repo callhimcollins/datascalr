@@ -16,7 +16,7 @@ type RunSummary = {
   avg_cache_ms: number | null;
   avg_no_cache_ms: number | null;
   avg_rps?: number | null;
-  avg_throttled_pct?: number | null;
+  avg_rl_pct?: number | null;
   comparison: { winner: string; percentage_faster: number; difference_ms: number } | null;
   analysis: { why: string; recommendation: string } | null;
   started_at: string | null;
@@ -34,10 +34,10 @@ import { fmtDate } from "@/lib/utils";
 function ComparisonSummary({ comparison, mode }: { comparison: RunSummary["comparison"]; mode?: string }) {
   if (mode === "rate_limiting") {
     if (!comparison) return <span className="text-zinc-400 text-xs">—</span>;
-    const rl = comparison as unknown as { avg_rps?: number; avg_throttled_pct?: number };
+    const rl = comparison as unknown as { avg_rps?: number; avg_rl_pct?: number };
     return (
       <span className="text-xs text-blue-600 dark:text-blue-400">
-        {rl.avg_rps ?? "?"} rps · {rl.avg_throttled_pct ?? "?"}% throttled
+        {rl.avg_rps ?? "?"} rps · {rl.avg_rl_pct ?? "?"}% throttled
       </span>
     );
   }

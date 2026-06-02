@@ -20,7 +20,7 @@ type RunDetail = {
     mode?: string;
     rate_limit_rps?: number | null;
     avg_rps?: number | null;
-    avg_throttled_pct?: number | null;
+    avg_rl_pct?: number | null;
     peak_rps?: number | null;
     avg_cache_ms: number | null;
     avg_no_cache_ms: number | null;
@@ -231,7 +231,7 @@ export default function RunDetailPage() {
                     <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Avg Throughput</div>
                   </div>
                   <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2.5 text-center">
-                    <div className="text-2xl font-bold text-amber-600 dark:text-amber-400">{rlComparison.avg_throttled_pct}%</div>
+                    <div className="text-2xl font-bold text-amber-600 dark:text-amber-400">{rlComparison.avg_rl_pct}%</div>
                     <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Avg Throttled</div>
                   </div>
                 </div>
@@ -252,14 +252,14 @@ export default function RunDetailPage() {
                 <div className="rounded-lg bg-zinc-100 dark:bg-zinc-800 px-3 py-3">
                   <div className="text-center">
                     <div className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">
-                      {rlComparison.avg_throttled_pct > 50
+                      {rlComparison.avg_rl_pct > 50
                         ? "Ceiling was heavily hit — consider increasing the limit or optimizing endpoints"
-                        : rlComparison.avg_throttled_pct > 10
+                        : rlComparison.avg_rl_pct > 10
                         ? "Ceiling was occasionally hit — traffic near the boundary"
                         : "Traffic stayed well within the rate limit ceiling"}
                     </div>
                     <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-                      {rlComparison.total_throttled} of {rlComparison.total_passed + rlComparison.total_throttled} requests were throttled
+                      {rlComparison.total_rate_limited} of {rlComparison.total_passed + rlComparison.total_rate_limited} requests were rate-limited
                     </div>
                   </div>
                 </div>

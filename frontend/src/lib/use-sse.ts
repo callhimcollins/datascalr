@@ -16,7 +16,7 @@ type RawSSEMessage = {
   noCacheRps?: number;
   rateLimited?: number;
   rateLimitedPct?: number;
-  throttledVus?: number;
+  rateLimitedVus?: number;
   totalRps?: number;
   events?: { level: string; chart?: string; msg: string }[];
   done?: boolean;

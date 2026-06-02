@@ -6,7 +6,6 @@ import time
 
 import httpx
 
-from .rate_limiter import TokenBucketRateLimiter
 from .utils import build_body, build_url, pick_endpoint
 from ..metrics.collector import MetricsCollector, Sample
 
@@ -18,7 +17,6 @@ async def virtual_user_loop(
     client: httpx.AsyncClient,
     stop_event: asyncio.Event,
     base_think_time: float,
-    rate_limiter: TokenBucketRateLimiter | None = None,
 ) -> None:
     """Single virtual user coroutine.
 
@@ -27,18 +25,21 @@ async def virtual_user_loop(
     """
     endpoints = config.get("endpoints", [])
     cached = config.get("target_cached_only", False)
+    is_rate_limit_mode = config.get("mode") == "rate_limiting"
 
     while not stop_event.is_set():
         think_time = max(0.5, random.gauss(base_think_time, base_think_time * 0.3))
-        # Rate limiter check (blocks if over the ceiling)
-        throttled = False
-        if rate_limiter is not None:
-            throttled = not await rate_limiter.acquire()
 
         endpoint = pick_endpoint(endpoints)
         url = build_url(config["base_url"], endpoint)
         body = build_body(endpoint.get("body_template"))
         is_cached = cached or "cached=true" in url.lower()
+
+        # In rate limiting mode, identify each VU and pass the configured ceiling
+        headers = {}
+        if is_rate_limit_mode:
+            rps = config.get("rate_limit_rps", 10)
+            headers = {"X-VU-ID": str(vu_id), "X-RateLimit-RPS": str(rps)}
 
         start = time.monotonic()
         error: str | None = None
@@ -50,6 +51,7 @@ async def virtual_user_loop(
                     method=endpoint["method"],
                     url=url,
                     json=body,
+                    headers=headers,
                     timeout=10.0,
                 ),
                 timeout=10.0,
@@ -78,7 +80,7 @@ async def virtual_user_loop(
             cached=is_cached,
             cache_hit=cache_hit,
             error=error,
-            throttled=throttled,
+            rate_limited=status_code == 429,
             vu_id=vu_id,
         ))
 

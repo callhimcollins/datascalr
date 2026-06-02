@@ -189,6 +189,7 @@ def _detect_rate_limiting(t: int, bucket: dict, config: dict, state: dict, event
         return
 
     rl_count = bucket.get("rateLimited", 0)
+    rl_vus = bucket.get("rateLimitedVus", 0)
     rate_limit_rps = config.get("rate_limit_rps", 0)
     last_rl_level = state.get("rl_level", "normal")
 
@@ -196,7 +197,7 @@ def _detect_rate_limiting(t: int, bucket: dict, config: dict, state: dict, event
         events.append({
             "level": "warn",
             "chart": "rate_limit",
-            "msg": f"Rate limit saturated: {rl_pct:.0f}% of requests throttled ({rl_count}/{total_rps_bucket} req/s). Traffic is hitting the {rate_limit_rps} RPS ceiling.",
+            "msg": f"Rate limit saturated: {rl_pct:.0f}% of requests returning 429 ({rl_count}/{total_rps_bucket} req/s, {rl_vus} VUs affected). API rejecting requests over {rate_limit_rps} req/s per user.",
         })
         state["rl_level"] = "saturated"
 
@@ -204,7 +205,7 @@ def _detect_rate_limiting(t: int, bucket: dict, config: dict, state: dict, event
         events.append({
             "level": "info",
             "chart": "rate_limit",
-            "msg": f"Approaching rate limit: {rl_pct:.0f}% of requests throttled. Traffic nearing the {rate_limit_rps} RPS ceiling.",
+            "msg": f"Rate limiting active: {rl_pct:.0f}% of requests hitting 429. Some VUs exceeding the {rate_limit_rps} req/s ceiling.",
         })
         state["rl_level"] = "approaching"
 
@@ -212,7 +213,7 @@ def _detect_rate_limiting(t: int, bucket: dict, config: dict, state: dict, event
         events.append({
             "level": "info",
             "chart": "rate_limit",
-            "msg": "Rate limit no longer throttling. Traffic is within the ceiling.",
+            "msg": "Rate limiting subsided — no 429s in this window. Traffic is within the ceiling.",
         })
         state["rl_level"] = "normal"
 

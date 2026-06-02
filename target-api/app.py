@@ -1,9 +1,10 @@
 import json
 import os
+import time
 
 import asyncpg
 import redis.asyncio as aioredis
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 
 app = FastAPI(title="target-api", version="0.1.0")
@@ -12,6 +13,27 @@ DATABASE_URL = os.environ["DATABASE_URL"]
 REDIS_URL = os.environ["REDIS_URL"]
 
 CACHE_TTL = 10
+
+# Per-VU rate limiting (fixed 1-second window, activated by X-VU-ID header)
+# Each VU sends X-RateLimit-RPS to set its own ceiling (per-request override)
+_rate_limit_buckets: dict[str, dict] = {}
+
+
+def _check_rate_limit(vu_id: str, max_rps: int) -> bool:
+    """Return True if the request should be allowed, False if rate-limited."""
+    now = time.monotonic()
+    bucket = _rate_limit_buckets.get(vu_id)
+
+    if bucket is None or now - bucket["window_start"] >= 1.0:
+        # New window — use the ceiling from the request header
+        _rate_limit_buckets[vu_id] = {"count": 1, "window_start": now, "limit": max_rps}
+        return True
+
+    if bucket["count"] >= bucket["limit"]:
+        return False  # rate-limited
+
+    bucket["count"] += 1
+    return True
 
 
 @app.on_event("startup")
@@ -24,6 +46,20 @@ async def startup():
 async def shutdown():
     await app.state.pg.close()
     await app.state.redis.close()
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    vu_id = request.headers.get("X-VU-ID")
+    if vu_id is not None and request.url.path.startswith("/api/"):
+        max_rps = int(request.headers.get("X-RateLimit-RPS", "10"))
+        if not _check_rate_limit(vu_id, max_rps):
+            return JSONResponse(
+                status_code=429,
+                content={"error": "rate_limit_exceeded", "message": f"Max {max_rps} req/s per user exceeded", "vu_id": vu_id},
+                headers={"X-RateLimit-Limit": str(max_rps), "X-RateLimit-VU-ID": vu_id},
+            )
+    return await call_next(request)
 
 
 @app.get("/health")

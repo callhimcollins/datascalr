@@ -8,7 +8,7 @@ class Sample:
     cached: bool
     cache_hit: bool | None = None
     error: str | None = None
-    throttled: bool = False
+    rate_limited: bool = False
     vu_id: int = 0
 
 
@@ -36,10 +36,11 @@ class MetricsCollector:
         """Swap the sample buffer and compute aggregate stats for the window."""
         bucket, self._samples = self._samples, []
 
+        # Exclude rate-limited (429) responses from error buckets — they're tracked separately
         cached_ok = [s for s in bucket if s.cached and s.error is None]
         uncached_ok = [s for s in bucket if not s.cached and s.error is None]
-        cached_err = [s for s in bucket if s.cached and s.error is not None]
-        uncached_err = [s for s in bucket if not s.cached and s.error is not None]
+        cached_err = [s for s in bucket if s.cached and s.error is not None and not s.rate_limited]
+        uncached_err = [s for s in bucket if not s.cached and s.error is not None and not s.rate_limited]
 
         cache_hit_ok = [s.latency_ms for s in cached_ok if s.cache_hit is True]
         cache_miss_ok = [s.latency_ms for s in cached_ok if s.cache_hit is False]
@@ -50,8 +51,8 @@ class MetricsCollector:
         cached_total = len(cached_ok) + len(cached_err)
         uncached_total = len(uncached_ok) + len(uncached_err)
 
-        throttled_samples = [s for s in bucket if s.throttled]
-        throttled_vus = len({s.vu_id for s in throttled_samples}) if throttled_samples else 0
+        rate_limited_samples = [s for s in bucket if s.rate_limited]
+        rate_limited_vus = len({s.vu_id for s in rate_limited_samples}) if rate_limited_samples else 0
         total = len(bucket)
 
         return {
@@ -69,8 +70,8 @@ class MetricsCollector:
             "noCacheCount": len(uncached_ok),
             "cacheRps": cached_total,
             "noCacheRps": uncached_total,
-            "rateLimited": len(throttled_samples),
-            "rateLimitedPct": round(len(throttled_samples) / total * 100, 1) if total > 0 else None,
-            "throttledVus": throttled_vus,
+            "rateLimited": len(rate_limited_samples),
+            "rateLimitedPct": round(len(rate_limited_samples) / total * 100, 1) if total > 0 else None,
+            "rateLimitedVus": rate_limited_vus,
             "totalRps": total,
         }
