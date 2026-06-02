@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine,
+} from "recharts";
 import { LatencyChart } from "@/components/LatencyChart";
 import { ErrorChart } from "@/components/ErrorChart";
 import type { LatencyPoint, CacheComparison, RateLimitComparison } from "@/lib/types";
@@ -219,7 +222,25 @@ export function RunningView({
             )}
           </div>
           <div className={isRateLimit ? "h-[calc(100%-40px)]" : "h-[280px]"}>
-            <LatencyChart data={latencyHistory} percentile={percentile} activeLine={hoveredEvent?.t ?? null} hoveredPoint={hoveredEvent?.chart === "latency" ? hoveredPoint : null} />
+            {isRateLimit ? (
+              <div className="h-full flex flex-col justify-center">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={latencyHistory} margin={{ top: 4, right: 8, bottom: 16, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgb(113 113 122 / 0.25)" />
+                    <XAxis dataKey="t" tick={{ fontSize: 11, fill: "#a1a1aa", fontWeight: 600 }} tickLine={false} axisLine={false} label={{ value: "seconds", position: "insideBottomRight", offset: -4, style: { fontSize: 10, fill: "#a1a1aa", fontWeight: 600 } }} />
+                    <YAxis tick={{ fontSize: 11, fill: "#a1a1aa", fontWeight: 600 }} tickLine={false} axisLine={false} width={50} label={{ value: "rps", angle: -90, position: "insideLeft", offset: 4, style: { fontSize: 10, fill: "#a1a1aa", fontWeight: 600 } }} />
+                    <Tooltip />
+                    <Area type="monotone" dataKey="totalRps" name="Actual RPS" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.2} strokeWidth={2} dot={false} isAnimationActive={false} />
+                    <Area type="monotone" dataKey="rateLimited" name="Rate-limited (429)" stroke="#f59e0b" fill="#f59e0b" fillOpacity={0.2} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                    {rlComparison && (
+                      <ReferenceLine y={rlComparison.rate_limit_ceiling} stroke="#ef4444" strokeDasharray="6 3" label={{ value: "ceiling", position: "right", style: { fontSize: 10, fill: "#ef4444" } }} />
+                    )}
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <LatencyChart data={latencyHistory} percentile={percentile} activeLine={hoveredEvent?.t ?? null} hoveredPoint={hoveredEvent?.chart === "latency" ? hoveredPoint : null} />
+            )}
           </div>
           {!isRateLimit && (
             <>

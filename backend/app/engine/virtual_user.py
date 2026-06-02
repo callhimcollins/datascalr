@@ -28,7 +28,11 @@ async def virtual_user_loop(
     is_rate_limit_mode = config.get("mode") == "rate_limiting"
 
     while not stop_event.is_set():
-        think_time = max(0.5, random.gauss(base_think_time, base_think_time * 0.3))
+        # Rate limiting mode: fast fire rate to actually trigger 429s from the target API
+        if is_rate_limit_mode:
+            think_time = max(0.05, random.gauss(0.15, 0.05))
+        else:
+            think_time = max(0.5, random.gauss(base_think_time, base_think_time * 0.3))
 
         endpoint = pick_endpoint(endpoints)
         url = build_url(config["base_url"], endpoint)
