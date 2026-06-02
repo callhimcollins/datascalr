@@ -217,15 +217,14 @@ def _detect_rate_limiting(t: int, bucket: dict, config: dict, state: dict, event
         })
         state["rl_level"] = "normal"
 
-    if rate_limit_rps > 0:
-        pct_of_ceiling = round(total_rps_bucket / rate_limit_rps * 100, 1)
-        if pct_of_ceiling > 90 and not state.get("rl_ceiling_fired"):
-            events.append({
-                "level": "info",
-                "chart": "rate_limit",
-                "msg": f"Throughput at {pct_of_ceiling}% of rate limit ceiling ({total_rps_bucket}/{rate_limit_rps} RPS).",
-            })
-            state["rl_ceiling_fired"] = True
+    if rate_limit_rps > 0 and rl_pct > 0 and not state.get("rl_ceiling_fired"):
+        rl_vus = bucket.get("rateLimitedVus", 0)
+        events.append({
+            "level": "info",
+            "chart": "rate_limit",
+            "msg": f"VUs exceeding the {rate_limit_rps} req/s ceiling — {rl_pct:.0f}% rate-limited ({rl_vus} VUs affected).",
+        })
+        state["rl_ceiling_fired"] = True
 
 
 def _detect_error_spikes(bucket: dict, state: dict, events: list[dict]) -> None:

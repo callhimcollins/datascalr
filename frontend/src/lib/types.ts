@@ -59,7 +59,6 @@ export type RateLimitComparison = {
   peak_rps: number;
   rate_limit_ceiling: number;
   avg_rl_pct: number;
-  avg_rps_pct_of_ceiling: number;
   total_rate_limited: number;
   total_passed: number;
 };
