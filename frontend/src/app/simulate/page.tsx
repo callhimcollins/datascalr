@@ -15,6 +15,7 @@ function SimulateInner() {
   const duration = searchParams.get("duration") ?? "30";
   const profileLabel = searchParams.get("profile") ?? "";
   const mode = (searchParams.get("mode") ?? "cache_comparison") as "cache_comparison" | "rate_limiting";
+  const rateLimitRps = searchParams.get("rateLimitRps") ? Number(searchParams.get("rateLimitRps")) : undefined;
 
   const { sim } = useSim();
   const [error, setError] = useState<string | null>(null);
@@ -264,6 +265,7 @@ function SimulateInner() {
             isComplete={isComplete}
             isStopped={isStopped}
             comparison={comparison}
+            rateLimitRps={rateLimitRps}
             aiAnalysis={aiAnalysis}
             aiLoading={aiLoading}
             onRunAgain={handleRunAgain}

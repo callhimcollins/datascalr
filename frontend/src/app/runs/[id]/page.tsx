@@ -267,7 +267,11 @@ export default function RunDetailPage() {
                     <div className="text-sm font-bold text-zinc-700 dark:text-zinc-300">{rlComparison.rate_limit_ceiling} rps</div>
                     <div className="text-[10px] text-zinc-500 dark:text-zinc-400">Ceiling (per VU)</div>
                   </div>
-                    </div>
+                  <div className="rounded-lg bg-zinc-100 dark:bg-zinc-800 px-2 py-2 text-center">
+                    <div className="text-sm font-bold text-zinc-700 dark:text-zinc-300">{rlComparison.total_passed + rlComparison.total_rate_limited}</div>
+                    <div className="text-[10px] text-zinc-500 dark:text-zinc-400">Total Req</div>
+                  </div>
+                </div>
                 <div className="rounded-lg bg-zinc-100 dark:bg-zinc-800 px-3 py-3">
                   <div className="text-center">
                     <div className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">
