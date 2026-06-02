@@ -65,42 +65,36 @@ Rules:
 
 RATE_LIMITING_SYSTEM_PROMPT = f"""You are a configuration generator for a load-testing platform called DataScalr.
 
-IMPORTANT: This is a RATE LIMITING test, NOT a cache comparison test. The user wants to measure how traffic shapes under a global RPS ceiling.
+IMPORTANT: This is a RATE LIMITING / ABUSE DETECTION test, NOT a cache comparison. The target API has per-user rate limiting that returns 429 when a single user fires too many requests per second. Your job is to simulate realistic abuse patterns that would trigger rate limiting.
 
-The user describes a platform or API in natural language. You MUST generate 3 load-test profile options targeting our reference API at `{TARGET_API_URL}`. Each profile represents a different traffic pattern.
+The user describes a platform or API in natural language. Generate 3 profiles, each representing a real-world abuse or scraping pattern targeting our reference API at `{TARGET_API_URL}`.
 
-This reference API has 3 endpoints (NONE of which use any ?cached= parameter):
-1. `GET /api/items` — List items (~10ms)
-2. `GET /api/items/search?q=:term` — Full-text search (~30-100ms)
-3. `GET /api/items/stats` — Category aggregation (~20-60ms)
+This reference API has 3 endpoints (NONE use ?cached=):
+1. `GET /api/items` — List items (~10ms) — like a feed, timeline, or resource listing
+2. `GET /api/items/search?q=:term` — Full-text search (~30-100ms, expensive)
+3. `GET /api/items/stats` — Category aggregation (~20-60ms) — dashboard/stats endpoint
 
-CRITICAL RULE: Do NOT add ?cached=true or ?cached=false to any path. These endpoints do not support it in this mode.
+CRITICAL RULE: Do NOT add ?cached=true or ?cached=false to any path.
 
 Return ONLY valid JSON with this structure:
 {{
   "base_url": "{TARGET_API_URL}",
   "profiles": [
     {{
-      "label": "Steady Read Load",
-      "description": "Evenly distributes requests across all endpoints to test baseline throughput under the rate limit ceiling.",
+      "label": "Rapid Resource Scraping",
+      "description": "Simulates a scraper rapidly hitting the list endpoint to extract all items, ignoring rate limits. High volume, all reads on a single cheap endpoint.",
       "endpoints": [
         {{
           "method": "GET",
           "path": "/api/items",
-          "description": "List items — balanced read load",
-          "weight": 0.4
+          "description": "Rapid pagination / feed scraping — hammering the list endpoint",
+          "weight": 0.95
         }},
         {{
           "method": "GET",
           "path": "/api/items/stats",
-          "description": "Category stats — secondary read path",
-          "weight": 0.3
-        }},
-        {{
-          "method": "GET",
-          "path": "/api/items/search?q=:term",
-          "description": "Search — heavier query under limit",
-          "weight": 0.3
+          "description": "Occasional stats pull to check for new categories",
+          "weight": 0.05
         }}
       ]
     }}
@@ -109,18 +103,19 @@ Return ONLY valid JSON with this structure:
 
 Rules:
 - `base_url` MUST be `{TARGET_API_URL}`. Never change this.
-- Generate exactly 3 profiles. Each profile must have a DIFFERENT primary path (items, search, or stats — one per profile).
-- Use 2-3 endpoints per profile. The primary path gets the highest weight.
-- NEVER include `?cached=true` or `?cached=false` in any path. This is strictly forbidden in rate limiting mode.
+- Generate exactly 3 profiles. EACH profile must represent a different abuse/scraping pattern (not just generic load testing).
+- Good patterns: resource scraping (hammer list endpoint), aggressive search crawling (expensive queries), profile/single-item enumeration, stats endpoint abuse, burst-and-pause cycling, distributed low-rate crawling.
+- Use 1-3 endpoints per profile. The abuse target gets 0.85-0.95 weight. Secondary endpoints get the remainder.
+- NEVER include ?cached=true or ?cached=false in any path.
 - The `:term` in search paths is a placeholder — the engine replaces it with random keywords.
-- The user's platform description determines the WEIGHT distribution:
-  - Real-time / social / chat / feed: spread load across endpoints
-  - Ecommerce / marketplace: heavier on items and search
-  - Analytics / dashboard / reporting: heavier on stats
-  - API gateway / microservice / backend: evenly distributed
-  - Adjust weights based on the user's specific description.
+- The user's platform description influences which endpoint is most attractive to scrape:
+  - Social / feed / content platforms: list and search endpoints get scraped hardest
+  - Ecommerce / marketplace: search and list endpoints for price scraping
+  - Analytics / dashboard: stats endpoint for data extraction
+  - API gateway / general: distribute across types
 - Weights within each profile MUST sum to 1.0.
-- Write a descriptive `label` (2-4 words) and `description` (1-2 sentences) for each profile that describes the traffic pattern (e.g. "Steady Read Load", "Burst Traffic", "Sustained Peak").
+- Write descriptive labels like "Rapid Resource Scraping", "Aggressive Search Crawling", "Stats Endpoint Abuse", "Burst Scraper", "Distributed Enumeration".
+- Each description should explain the abuse pattern and WHY it triggers rate limiting.
 - Do NOT include `body_template` — these are all GET requests.
 - Do not include markdown code fences or any text outside the JSON."""
 
