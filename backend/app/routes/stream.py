@@ -11,43 +11,10 @@ from .runs import active_runs, stop_events
 from ..engine import run_engine
 from ..metrics.analysis import analyze
 from ..metrics.collector import MetricsCollector
+from ..metrics.comparison import compute_comparison
 from ..supabase_client import update
 
 router = APIRouter()
-
-
-def _compute_comparison(metrics: list[dict], config: dict) -> dict:
-    cache_vals = [m["cacheHit"] for m in metrics if m.get("cacheHit") is not None]
-    no_cache_vals = [m["noCache"] for m in metrics if m.get("noCache") is not None]
-
-    ramp_up = config.get("ramp_up", 0)
-    cache_steady = [m["cacheHit"] for m in metrics[ramp_up:] if m.get("cacheHit") is not None]
-    no_cache_steady = [m["noCache"] for m in metrics[ramp_up:] if m.get("noCache") is not None]
-
-    avg_cache = round(sum(cache_vals) / len(cache_vals), 1) if cache_vals else 0.0
-    avg_no_cache = round(sum(no_cache_vals) / len(no_cache_vals), 1) if no_cache_vals else 0.0
-    avg_cache_steady = round(sum(cache_steady) / len(cache_steady), 1) if cache_steady else 0.0
-    avg_no_cache_steady = round(sum(no_cache_steady) / len(no_cache_steady), 1) if no_cache_steady else 0.0
-
-    comparison = None
-    if avg_cache_steady > 0 and avg_no_cache_steady > 0:
-        diff = avg_no_cache_steady - avg_cache_steady
-        pct_diff = (diff / avg_no_cache_steady) * 100 if avg_no_cache_steady > 0 else 0
-        comparison = {
-            "cache_ms": avg_cache_steady,
-            "no_cache_ms": avg_no_cache_steady,
-            "difference_ms": round(diff, 1),
-            "percentage_faster": round(pct_diff, 1),
-            "winner": "cache" if diff > 0 else "no_cache" if diff < 0 else "tie",
-        }
-
-    return {
-        "avg_cache_ms": avg_cache,
-        "avg_no_cache_ms": avg_no_cache,
-        "avg_cache_steady_ms": avg_cache_steady,
-        "avg_no_cache_steady_ms": avg_no_cache_steady,
-        "comparison": comparison,
-    }
 
 
 @router.get("/api/runs/{run_id}/stream")
@@ -110,18 +77,24 @@ async def stream_run(run_id: str, request: Request):
             run["status"] = status_label
 
             # Compute and persist to Supabase
-            result = _compute_comparison(run["metrics"], config)
+            result = compute_comparison(run["metrics"], config)
             try:
-                await update("simulation_runs", "id", run_id, {
+                persist_fields: dict = {
                     "status": status_label,
                     "metrics": run["metrics"],
-                    "avg_cache_ms": result["avg_cache_ms"],
-                    "avg_no_cache_ms": result["avg_no_cache_ms"],
-                    "avg_cache_steady_ms": result["avg_cache_steady_ms"],
-                    "avg_no_cache_steady_ms": result["avg_no_cache_steady_ms"],
                     "comparison": result["comparison"],
                     "completed_at": datetime.now(timezone.utc).isoformat(),
-                })
+                }
+                if config.get("mode") == "rate_limiting":
+                    persist_fields["avg_rps"] = result.get("avg_rps")
+                    persist_fields["avg_throttled_pct"] = result.get("avg_throttled_pct")
+                    persist_fields["peak_rps"] = result.get("peak_rps")
+                else:
+                    persist_fields["avg_cache_ms"] = result.get("avg_cache_ms")
+                    persist_fields["avg_no_cache_ms"] = result.get("avg_no_cache_ms")
+                    persist_fields["avg_cache_steady_ms"] = result.get("avg_cache_steady_ms")
+                    persist_fields["avg_no_cache_steady_ms"] = result.get("avg_no_cache_steady_ms")
+                await update("simulation_runs", "id", run_id, persist_fields)
             except Exception:
                 pass  # best-effort persistence
 

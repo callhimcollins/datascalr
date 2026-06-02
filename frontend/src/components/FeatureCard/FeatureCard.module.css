@@ -1,6 +1,5 @@
 .card {
   border-radius: 0.75rem;
-  /* border: 1px solid #c7c7c7; */
   padding: 1.25rem;
   cursor: pointer;
   overflow: hidden;
@@ -14,14 +13,6 @@
 .card:hover {
   border-color: rgba(206, 206, 206, 0.8);
   transform: scale(1.04);
-}
-
-:global(.dark) .card {
-  border-color: rgba(153, 153, 153, 0.6);
-}
-
-:global(.dark) .card:hover {
-  border-color: rgba(113, 113, 122, 0.6);
 }
 
 :global(.dark) .card {

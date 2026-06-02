@@ -1,7 +1,4 @@
-from __future__ import annotations
-
-import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
@@ -11,6 +8,8 @@ class Sample:
     cached: bool
     cache_hit: bool | None = None
     error: str | None = None
+    throttled: bool = False
+    vu_id: int = 0
 
 
 def _percentile(values: list[float], p: int) -> float:
@@ -51,6 +50,10 @@ class MetricsCollector:
         cached_total = len(cached_ok) + len(cached_err)
         uncached_total = len(uncached_ok) + len(uncached_err)
 
+        throttled_samples = [s for s in bucket if s.throttled]
+        throttled_vus = len({s.vu_id for s in throttled_samples}) if throttled_samples else 0
+        total = len(bucket)
+
         return {
             "t": t,
             "cacheHit": round(_percentile(cache_hit_ok, 50), 2) if cache_hit_ok else None,
@@ -66,4 +69,8 @@ class MetricsCollector:
             "noCacheCount": len(uncached_ok),
             "cacheRps": cached_total,
             "noCacheRps": uncached_total,
+            "rateLimited": len(throttled_samples),
+            "rateLimitedPct": round(len(throttled_samples) / total * 100, 1) if total > 0 else None,
+            "throttledVus": throttled_vus,
+            "totalRps": total,
         }

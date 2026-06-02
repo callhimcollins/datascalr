@@ -25,6 +25,11 @@ async def start_run(req: StartRunRequest):
         "concurrency": req.concurrency,
         "ramp_up": req.ramp_up,
         "duration": req.duration,
+        "mode": req.mode,
+        "rate_limit_rps": req.rate_limit_rps,
+        "base_url": req.base_url,
+        "endpoints": req.endpoints,
+        "platform": req.platform,
     }
     await insert("simulation_runs", run_data)
     active_runs[run_id] = {
@@ -49,7 +54,7 @@ async def list_runs():
         "simulation_runs",
         order="started_at.desc",
         limit=50,
-        columns="id,parent_id,profile_label,status,concurrency,ramp_up,duration,avg_cache_ms,avg_no_cache_ms,comparison,analysis,error_count,started_at,completed_at",
+        columns="id,parent_id,profile_label,status,concurrency,ramp_up,duration,mode,rate_limit_rps,avg_cache_ms,avg_no_cache_ms,avg_rps,avg_throttled_pct,peak_rps,comparison,analysis,error_count,started_at,completed_at",
     )
     return rows
 

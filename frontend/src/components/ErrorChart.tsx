@@ -12,7 +12,7 @@ import {
   ReferenceLine,
 } from "recharts";
 
-import type { LatencyPoint } from "@/components/LatencyChart";
+import type { LatencyPoint } from "@/lib/types";
 
 function CustomTooltip({ active, payload, label }: Record<string, unknown>) {
   if (!active || !payload || !Array.isArray(payload) || payload.length === 0) return null;

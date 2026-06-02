@@ -10,6 +10,8 @@ class StartRunRequest(BaseModel):
     duration: int
     platform: str = ""
     profile_label: str = ""
+    mode: str = "cache_comparison"
+    rate_limit_rps: int | None = None
 
 
 class StartRunResponse(BaseModel):

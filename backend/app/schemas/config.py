@@ -1,12 +1,11 @@
+from enum import Enum
+
 from pydantic import BaseModel
 
 
-class EndpointConfig(BaseModel):
-    method: str
-    path: str
-    description: str
-    weight: float
-    body_template: dict | None = None
+class ConfigMode(str, Enum):
+    cache_comparison = "cache_comparison"
+    rate_limiting = "rate_limiting"
 
 
 class ProfileEndpoint(BaseModel):
@@ -27,6 +26,8 @@ class GenerateConfigRequest(BaseModel):
     concurrency: int = 10
     ramp_up: int = 5
     duration: int = 30
+    mode: ConfigMode = ConfigMode.cache_comparison
+    rate_limit_rps: int | None = None
 
 
 class GenerateConfigResponse(BaseModel):

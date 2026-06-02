@@ -1,36 +1,14 @@
 "use client";
 
 import { createContext, useContext, useState } from "react";
-
-export type SimEndpoint = {
-  method: string;
-  path: string;
-  weight?: number;
-};
+import type { SimEndpoint, ProfileEndpoint, Profile, FullConfig } from "./types";
 
 type SimState = {
   baseUrl: string;
   parentId: string;
   endpoints: SimEndpoint[];
-};
-
-export type ProfileEndpoint = {
-  method: string;
-  path: string;
-  description: string;
-  weight: number;
-};
-
-export type Profile = {
-  label: string;
-  description: string;
-  endpoints: ProfileEndpoint[];
-};
-
-export type FullConfig = {
-  parent_id: string;
-  base_url: string;
-  profiles: Profile[];
+  mode?: "cache_comparison" | "rate_limiting";
+  rateLimitRps?: number;
 };
 
 const SimContext = createContext<{
