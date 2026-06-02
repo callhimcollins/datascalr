@@ -4,7 +4,7 @@ import os
 import httpx
 from fastapi import APIRouter, HTTPException
 
-from ..schemas import GenerateConfigRequest, GenerateConfigResponse, Profile
+from ..schemas import ConfigMode, GenerateConfigRequest, GenerateConfigResponse, Profile
 from ..supabase_client import insert
 
 router = APIRouter()
@@ -63,6 +63,68 @@ Rules:
 - Do not include markdown code fences or any text outside the JSON."""
 
 
+RATE_LIMITING_SYSTEM_PROMPT = f"""You are a configuration generator for a load-testing platform called DataScalr.
+
+IMPORTANT: This is a RATE LIMITING test, NOT a cache comparison test. The user wants to measure how traffic shapes under a global RPS ceiling.
+
+The user describes a platform or API in natural language. You MUST generate 3 load-test profile options targeting our reference API at `{TARGET_API_URL}`. Each profile represents a different traffic pattern.
+
+This reference API has 3 endpoints (NONE of which use any ?cached= parameter):
+1. `GET /api/items` — List items (~10ms)
+2. `GET /api/items/search?q=:term` — Full-text search (~30-100ms)
+3. `GET /api/items/stats` — Category aggregation (~20-60ms)
+
+CRITICAL RULE: Do NOT add ?cached=true or ?cached=false to any path. These endpoints do not support it in this mode.
+
+Return ONLY valid JSON with this structure:
+{{
+  "base_url": "{TARGET_API_URL}",
+  "profiles": [
+    {{
+      "label": "Steady Read Load",
+      "description": "Evenly distributes requests across all endpoints to test baseline throughput under the rate limit ceiling.",
+      "endpoints": [
+        {{
+          "method": "GET",
+          "path": "/api/items",
+          "description": "List items — balanced read load",
+          "weight": 0.4
+        }},
+        {{
+          "method": "GET",
+          "path": "/api/items/stats",
+          "description": "Category stats — secondary read path",
+          "weight": 0.3
+        }},
+        {{
+          "method": "GET",
+          "path": "/api/items/search?q=:term",
+          "description": "Search — heavier query under limit",
+          "weight": 0.3
+        }}
+      ]
+    }}
+  ]
+}}
+
+Rules:
+- `base_url` MUST be `{TARGET_API_URL}`. Never change this.
+- Generate exactly 3 profiles. Each profile must have a DIFFERENT primary path (items, search, or stats — one per profile).
+- Use 2-3 endpoints per profile. The primary path gets the highest weight.
+- NEVER include `?cached=true` or `?cached=false` in any path. This is strictly forbidden in rate limiting mode.
+- The `:term` in search paths is a placeholder — the engine replaces it with random keywords.
+- The user's platform description determines the WEIGHT distribution:
+  - Real-time / social / chat / feed: spread load across endpoints
+  - Ecommerce / marketplace: heavier on items and search
+  - Analytics / dashboard / reporting: heavier on stats
+  - API gateway / microservice / backend: evenly distributed
+  - Adjust weights based on the user's specific description.
+- Weights within each profile MUST sum to 1.0.
+- Write a descriptive `label` (2-4 words) and `description` (1-2 sentences) for each profile that describes the traffic pattern (e.g. "Steady Read Load", "Burst Traffic", "Sustained Peak").
+- Do NOT include `body_template` — these are all GET requests.
+- Do not include markdown code fences or any text outside the JSON."""
+
+
 @router.post("/api/generate-config", response_model=GenerateConfigResponse)
 async def generate_config(req: GenerateConfigRequest):
     api_key = os.environ.get("DEEPSEEK_API_KEY", "")
@@ -71,6 +133,9 @@ async def generate_config(req: GenerateConfigRequest):
             status_code=500,
             detail="DEEPSEEK_API_KEY not configured on the server",
         )
+
+    system_prompt = RATE_LIMITING_SYSTEM_PROMPT if req.mode == ConfigMode.rate_limiting else SYSTEM_PROMPT
+    parent_mode = req.mode.value if isinstance(req.mode, ConfigMode) else req.mode
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
@@ -83,7 +148,7 @@ async def generate_config(req: GenerateConfigRequest):
                 json={
                     "model": "deepseek-chat",
                     "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "system", "content": system_prompt},
                         {
                             "role": "user",
                             "content": f"Generate a load-test configuration for this API:\n\n{req.platform}",
@@ -108,11 +173,23 @@ async def generate_config(req: GenerateConfigRequest):
             raise ValueError("missing profiles array")
 
         profiles = [Profile(**p) for p in data["profiles"]]
+
+        # HACK: DeepSeek often returns ?cached=true/false even in rate limiting mode.
+        # Strip them unconditionally in rate limiting mode so the engine doesn't
+        # try to classify requests as cached vs uncached.
+        if req.mode == ConfigMode.rate_limiting:
+            for profile in profiles:
+                for ep in profile.endpoints:
+                    for param in ("?cached=true", "?cached=false", "&cached=true", "&cached=false"):
+                        ep.path = ep.path.replace(param, "")
+                    ep.path = ep.path.rstrip("?")
+
         parent = await insert("simulation_parents", {
             "label": req.platform,
             "platform": req.platform,
             "profiles": [p.model_dump() for p in profiles],
             "base_url": TARGET_API_URL,
+            "mode": parent_mode,
         })
 
         return GenerateConfigResponse(

@@ -1,15 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { LatencyPoint, LogEvent } from "@/components/LatencyChart";
-
-export type Comparison = {
-  cache_ms: number;
-  no_cache_ms: number;
-  difference_ms: number;
-  percentage_faster: number;
-  winner: "cache" | "no_cache" | "tie";
-};
+import type { LatencyPoint, CacheComparison, RateLimitComparison } from "./types";
 
 type RawSSEMessage = {
   t: number;
@@ -22,10 +14,14 @@ type RawSSEMessage = {
   noCacheCount?: number;
   cacheRps?: number;
   noCacheRps?: number;
+  rateLimited?: number;
+  rateLimitedPct?: number;
+  throttledVus?: number;
+  totalRps?: number;
   events?: { level: string; chart?: string; msg: string }[];
   done?: boolean;
   stopped?: boolean;
-  comparison?: Comparison;
+  comparison?: CacheComparison | RateLimitComparison;
 };
 
 export function useSSE(url: string | null): {
@@ -33,13 +29,13 @@ export function useSSE(url: string | null): {
   isComplete: boolean;
   isStopped: boolean;
   error: string | null;
-  comparison: Comparison | null;
+  comparison: CacheComparison | RateLimitComparison | null;
 } {
   const [data, setData] = useState<LatencyPoint[]>([]);
   const [isComplete, setIsComplete] = useState(false);
   const [isStopped, setIsStopped] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [comparison, setComparison] = useState<Comparison | null>(null);
+  const [comparison, setComparison] = useState<CacheComparison | RateLimitComparison | null>(null);
   const esRef = useRef<EventSource | null>(null);
 
   useEffect(() => {

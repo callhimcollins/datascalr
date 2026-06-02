@@ -10,7 +10,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { API_BASE } from "@/lib/api";
-import { useSim, type FullConfig, type Profile } from "@/lib/simulation-context";
+import { useSim } from "@/lib/simulation-context";
+import type { FullConfig, Profile } from "@/lib/types";
 
 function StepIndicator({ step }: { step: number }) {
   return (
@@ -29,6 +30,7 @@ function ConfigureInner() {
 
   const parentId = params.get("parentId");
 
+  const [mode, setMode] = useState<"cache_comparison" | "rate_limiting">("cache_comparison");
   const [step, setStep] = useState(1);
   const [generatedConfig, setGeneratedConfig] = useState<FullConfig | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -44,6 +46,7 @@ function ConfigureInner() {
     concurrency: params.get("concurrency") ?? "10",
     rampUp: params.get("rampUp") ?? "5",
     duration: params.get("duration") ?? "30",
+    rateLimitRps: "",
   });
 
   // Fetch parent data when reconfigure mode
@@ -66,7 +69,7 @@ function ConfigureInner() {
   const valid = form.platform.trim().length > 0;
   const platformChanged = originalPlatform !== null && form.platform.trim() !== originalPlatform;
 
-  function setNum(key: "concurrency" | "rampUp" | "duration", raw: string) {
+  function setNum(key: "concurrency" | "rampUp" | "duration" | "rateLimitRps", raw: string) {
     if (raw === "") {
       setForm({ ...form, [key]: "" });
       return;
@@ -104,6 +107,8 @@ function ConfigureInner() {
           concurrency: Number(form.concurrency || "1"),
           ramp_up: Number(form.rampUp || "0"),
           duration: Number(form.duration || "1"),
+          mode: mode,
+          rate_limit_rps: mode === "rate_limiting" ? Number(form.rateLimitRps || "0") || null : null,
         }),
       });
 
@@ -140,6 +145,8 @@ function ConfigureInner() {
         path: ep.path,
         weight: ep.weight,
       })),
+      mode: mode,
+      rateLimitRps: mode === "rate_limiting" ? Number(form.rateLimitRps) : undefined,
     });
 
     const qs = new URLSearchParams({
@@ -148,7 +155,11 @@ function ConfigureInner() {
       rampUp: form.rampUp || "0",
       duration: form.duration || "1",
       profile: profile.label,
+      mode: mode,
     });
+    if (mode === "rate_limiting") {
+      if (form.rateLimitRps) qs.set("rateLimitRps", form.rateLimitRps);
+    }
     router.push(`/simulate?${qs.toString()}`);
   }
 
@@ -166,10 +177,35 @@ function ConfigureInner() {
         {/* ── Step 1: Form ── */}
         {step === 1 && (
           <>
+            {/* Mode selector */}
+            <div className="flex gap-2 mb-6">
+              <button
+                onClick={() => setMode("cache_comparison")}
+                className={`flex-1 rounded-lg px-4 py-2.5 text-sm font-medium transition-all cursor-pointer ${
+                  mode === "cache_comparison"
+                    ? "bg-amber-600 text-white shadow-sm"
+                    : "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                }`}
+              >
+                Cache Comparison
+              </button>
+              <button
+                onClick={() => setMode("rate_limiting")}
+                className={`flex-1 rounded-lg px-4 py-2.5 text-sm font-medium transition-all cursor-pointer ${
+                  mode === "rate_limiting"
+                    ? "bg-amber-600 text-white shadow-sm"
+                    : "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                }`}
+              >
+                Rate Limiting
+              </button>
+            </div>
             <p className="mb-10 text-sm font-semibold text-muted-foreground">
               {parentData
                 ? "Tweak your config — changes to the description will create a new group in history."
-                : "Describe your REST API — DataScalr handles the rest."}
+                : mode === "rate_limiting"
+                  ? "Configure your rate limiting test — DataScalr will apply the ceiling across virtual users."
+                  : "Describe your REST API — DataScalr handles the rest."}
             </p>
             <form
               onSubmit={(e) => {
@@ -241,6 +277,24 @@ function ConfigureInner() {
                     />
                   </div>
 
+                  {mode === "rate_limiting" && (
+                    <div className="space-y-2">
+                      <Label htmlFor="rateLimit">Rate Limit Ceiling (RPS)</Label>
+                      <Input
+                        id="rateLimit"
+                        type="number"
+                        min={1}
+                        max={10000}
+                        value={form.rateLimitRps}
+                        onChange={(e) => setNum("rateLimitRps", e.target.value)}
+                        placeholder="e.g. 50"
+                      />
+                      <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                        Maximum requests per second across all virtual users. When exceeded, excess requests are throttled.
+                      </p>
+                    </div>
+                  )}
+
                   <Button
                     type="submit"
                     disabled={!valid || generating || loadingParent}
@@ -276,7 +330,7 @@ function ConfigureInner() {
             )}
 
             {/* Run params summary */}
-            <div className="grid grid-cols-3 gap-3">
+            <div className={`grid gap-3 ${mode === "rate_limiting" ? "grid-cols-4" : "grid-cols-3"}`}>
               <div className="glass-card rounded-lg px-3 py-2.5 text-center">
                 <div className="text-lg font-bold text-zinc-900 dark:text-zinc-50">
                   {form.concurrency || "1"}
@@ -301,6 +355,16 @@ function ConfigureInner() {
                   Duration
                 </div>
               </div>
+              {mode === "rate_limiting" && (
+                <div className="glass-card rounded-lg px-3 py-2.5 text-center">
+                  <div className="text-lg font-bold text-amber-600 dark:text-amber-400">
+                    {form.rateLimitRps || "—"} rps
+                  </div>
+                  <div className="text-[11px] text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">
+                    Ceiling
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Profile cards */}
@@ -336,14 +400,15 @@ function ConfigureInner() {
                     <div className="mt-3 space-y-1.5">
                       {profile.endpoints.map((ep, j) => {
                         const pct = Math.round(ep.weight * 100);
+                        const isCached = ep.path.includes("cached=true");
                         return (
                           <div key={j} className="flex items-center gap-2 text-xs">
                             <span className="w-16 shrink-0 font-mono text-zinc-500 dark:text-zinc-400">
-                              {ep.path.includes("cached=true") ? "Cached" : "Uncached"}
+                              {mode === "rate_limiting" ? ep.method : (isCached ? "Cached" : "Uncached")}
                             </span>
                             <div className="flex-1 h-2 rounded-full bg-zinc-200 dark:bg-zinc-700 overflow-hidden">
                               <div
-                                className={`h-full rounded-full ${ep.path.includes("cached=true") ? "bg-amber-500" : "bg-blue-500"}`}
+                                className={`h-full rounded-full ${mode === "rate_limiting" ? "bg-blue-500" : (isCached ? "bg-amber-500" : "bg-blue-500")}`}
                                 style={{ width: `${pct}%` }}
                               />
                             </div>

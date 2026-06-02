@@ -14,6 +14,7 @@ function SimulateInner() {
   const rampUp = searchParams.get("rampUp") ?? "5";
   const duration = searchParams.get("duration") ?? "30";
   const profileLabel = searchParams.get("profile") ?? "";
+  const mode = (searchParams.get("mode") ?? "cache_comparison") as "cache_comparison" | "rate_limiting";
 
   const { sim } = useSim();
   const [error, setError] = useState<string | null>(null);
@@ -33,7 +34,7 @@ function SimulateInner() {
   // Fallback comparison from local data when SSE dropped before done message
   const comparison = useMemo(() => {
     if (sseComparison) return sseComparison;
-    if (!autoComplete || latencyHistory.length < 3) return null;
+    if (!autoComplete || latencyHistory.length < 3 || mode === "rate_limiting") return null;
     const n = Number(rampUp);
     const steadyStart = Math.max(n + 1, 1);
     const steady = latencyHistory.filter((d) => d.t >= steadyStart);
@@ -70,6 +71,8 @@ function SimulateInner() {
           ramp_up: Number(rampUp),
           duration: Number(duration),
           platform,
+          mode: mode,
+          rate_limit_rps: mode === "rate_limiting" ? sim.rateLimitRps ?? null : null,
         }),
       });
 
@@ -184,6 +187,7 @@ function SimulateInner() {
 
   useEffect(() => {
     if (!isComplete || aiAnalysis || steady.length < 2) return;
+    if (mode === "rate_limiting") return;  // AI analysis is cache-specific
     const cacheVals = steady.map((d) => d.cacheHit).filter((v): v is number => v != null);
     const noCacheVals = steady.map((d) => d.noCache).filter((v): v is number => v != null);
     const missRates = steady.map((d) => d.cacheMissRate).filter((v): v is number => v != null);
@@ -215,8 +219,8 @@ function SimulateInner() {
         concurrency: Number(concurrency),
         ramp_up: Number(rampUp),
         duration: Number(duration),
-        winner: comparison?.winner ?? "tie",
-        percentage_faster: Math.abs(comparison?.percentage_faster ?? 0),
+        winner: comparison && "winner" in comparison ? comparison.winner : "tie",
+        percentage_faster: Math.abs(comparison && "percentage_faster" in comparison ? comparison.percentage_faster : 0),
         profile_label: platform,
         cache_weight: totalWeight > 0 ? cacheWeight / totalWeight : 0.5,
         no_cache_weight: totalWeight > 0 ? noCacheWeight / totalWeight : 0.5,
@@ -250,6 +254,7 @@ function SimulateInner() {
 
         {sim && runId && (
           <RunningView
+            mode={mode}
             latencyHistory={latencyHistory}
             concurrency={concurrency}
             rampUp={rampUp}

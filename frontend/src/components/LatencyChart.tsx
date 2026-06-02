@@ -12,29 +12,7 @@ import {
   ReferenceLine,
 } from "recharts";
 
-export type LogEvent = {
-  level: "info" | "warn" | "error";
-  chart?: string;
-  msg: string;
-};
-
-export type LatencyPoint = {
-  t: number;
-  cacheHit: number | null;
-  cacheHit_p95: number | null;
-  cacheHit_p99: number | null;
-  cacheMissRate: number | null;
-  noCache: number | null;
-  noCache_p95: number | null;
-  noCache_p99: number | null;
-  cachePct: number | null;
-  noCachePct: number | null;
-  cacheCount?: number;
-  noCacheCount?: number;
-  cacheRps?: number;
-  noCacheRps?: number;
-  events?: LogEvent[];
-};
+import type { LogEvent, LatencyPoint } from "@/lib/types";
 
 function fmt_ms(v: number | null): string {
   return v == null ? "— ms" : v < 1 ? `${v.toFixed(2)} ms` : `${v.toFixed(1)} ms`;

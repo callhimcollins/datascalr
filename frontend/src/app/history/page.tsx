@@ -12,8 +12,11 @@ type RunSummary = {
   concurrency: number;
   ramp_up: number;
   duration: number;
+  mode?: string;
   avg_cache_ms: number | null;
   avg_no_cache_ms: number | null;
+  avg_rps?: number | null;
+  avg_throttled_pct?: number | null;
   comparison: { winner: string; percentage_faster: number; difference_ms: number } | null;
   analysis: { why: string; recommendation: string } | null;
   started_at: string | null;
@@ -26,17 +29,18 @@ type ParentSummary = {
   created_at: string | null;
 };
 
-function fmtDate(iso: string | null) {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  const parts = d.toLocaleString("en-US", {
-    month: "short", day: "numeric", year: "numeric",
-    hour: "numeric", minute: "2-digit", hour12: true,
-  }).split(", ");
-  return `${parts[0]} ${parts[1]}, ${parts[2].toLowerCase()}`;
-}
+import { fmtDate } from "@/lib/utils";
 
-function ComparisonSummary({ comparison }: { comparison: RunSummary["comparison"] }) {
+function ComparisonSummary({ comparison, mode }: { comparison: RunSummary["comparison"]; mode?: string }) {
+  if (mode === "rate_limiting") {
+    if (!comparison) return <span className="text-zinc-400 text-xs">—</span>;
+    const rl = comparison as unknown as { avg_rps?: number; avg_throttled_pct?: number };
+    return (
+      <span className="text-xs text-blue-600 dark:text-blue-400">
+        {rl.avg_rps ?? "?"} rps · {rl.avg_throttled_pct ?? "?"}% throttled
+      </span>
+    );
+  }
   if (!comparison) return <span className="text-zinc-400 text-xs">—</span>;
   if (comparison.winner === "tie") return <span className="text-xs text-zinc-500">Tie</span>;
   const isCache = comparison.winner === "cache";
@@ -158,7 +162,7 @@ export default function HistoryPage() {
                             </div>
                           </div>
                           <div className="text-right shrink-0">
-                            <ComparisonSummary comparison={run.comparison} />
+                            <ComparisonSummary comparison={run.comparison} mode={run.mode} />
                           </div>
                         </div>
                       </Link>

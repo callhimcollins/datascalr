@@ -1,8 +1,8 @@
-from .config import EndpointConfig, GenerateConfigRequest, GenerateConfigResponse, Profile, ProfileEndpoint
+from .config import ConfigMode, GenerateConfigRequest, GenerateConfigResponse, Profile, ProfileEndpoint
 from .run import StartRunRequest, StartRunResponse
 
 __all__ = [
-    "EndpointConfig",
+    "ConfigMode",
     "GenerateConfigRequest",
     "GenerateConfigResponse",
     "Profile",

@@ -1,4 +1,4 @@
-from __future__ import annotations
+"""Per-second event detection for real-time analysis notifications."""
 
 
 def analyze(
@@ -10,15 +10,24 @@ def analyze(
 ) -> list[dict]:
     """Generate conversational notifications about significant system events."""
     events: list[dict] = []
-    prev = history[-1] if history else None
-    cc = bucket.get("cacheCount", 0)
-    nc = bucket.get("noCacheCount", 0)
-    cv = bucket.get("cacheHit")
-    nv = bucket.get("noCache")
-    mr = bucket.get("cacheMissRate")
-    cp = bucket.get("cachePct")
-    np = bucket.get("noCachePct")
 
+    _detect_lifecycle_events(t, config, events)
+    _detect_cache_storm(t, bucket, history, state, events)
+    _detect_redis_saturation(t, bucket, history, state, events)
+    _detect_pg_degradation(t, bucket, history, config, state, events)
+    _detect_httpx_saturation(t, bucket, config, state, events)
+    _detect_zero_throughput(t, bucket, state, events)
+    _detect_throughput_drop(t, bucket, history, state, events)
+    _detect_rate_limiting(t, bucket, config, state, events)
+    _detect_error_spikes(bucket, state, events)
+
+    return events
+
+
+# ── Detectors ──────────────────────────────────────────────────────────
+
+
+def _detect_lifecycle_events(t: int, config: dict, events: list[dict]) -> None:
     if t == 1:
         events.append({
             "level": "info",
@@ -33,7 +42,9 @@ def analyze(
             "msg": f"All {config['concurrency']} users are now live. Watching how the system handles the full load.",
         })
 
-    # --- Cache expiry storm ---
+
+def _detect_cache_storm(t: int, bucket: dict, history: list[dict], state: dict, events: list[dict]) -> None:
+    mr = bucket.get("cacheMissRate")
     if t > 2 and mr is not None and mr > 80 and not state.get("storm_fired"):
         events.append({
             "level": "warn",
@@ -43,7 +54,6 @@ def analyze(
         state["storm_fired"] = True
         state["storm_recovered"] = False
 
-    # --- Cache recovery ---
     if mr is not None and mr < 30 and state.get("storm_fired") and not state.get("storm_recovered"):
         events.append({
             "level": "info",
@@ -53,7 +63,9 @@ def analyze(
         state["storm_recovered"] = True
         state["storm_fired"] = False
 
-    # --- Redis saturation ---
+
+def _detect_redis_saturation(t: int, bucket: dict, history: list[dict], state: dict, events: list[dict]) -> None:
+    cv = bucket.get("cacheHit")
     if t > 5 and cv is not None:
         cache_rps = bucket.get("cacheRps", 0)
         last_redis_level = state.get("redis_level", "normal")
@@ -76,7 +88,9 @@ def analyze(
             })
             state["redis_level"] = "normal"
 
-    # --- PG degradation ---
+
+def _detect_pg_degradation(t: int, bucket: dict, history: list[dict], config: dict, state: dict, events: list[dict]) -> None:
+    nv = bucket.get("noCache")
     if t > 7 and nv is not None:
         recent = [h["noCache"] for h in history[-5:] if h.get("noCache") is not None]
         if len(recent) >= 3:
@@ -109,8 +123,14 @@ def analyze(
                 })
                 state["pg_level"] = "normal"
 
-    # --- httpx connection pool saturation ---
+
+def _detect_httpx_saturation(t: int, bucket: dict, config: dict, state: dict, events: list[dict]) -> None:
+    cc = bucket.get("cacheCount", 0)
+    nc = bucket.get("noCacheCount", 0)
+    cv = bucket.get("cacheHit")
+    nv = bucket.get("noCache")
     total_rps = cc + nc
+
     if t > 5 and total_rps > 0 and cv is not None and nv is not None:
         last_httpx_level = state.get("httpx_level", "normal")
         both_degraded = cv > 200 and nv > 200
@@ -130,7 +150,10 @@ def analyze(
             })
             state["httpx_level"] = "normal"
 
-    # --- Saturation — near-zero throughput ---
+
+def _detect_zero_throughput(t: int, bucket: dict, state: dict, events: list[dict]) -> None:
+    cc = bucket.get("cacheCount", 0)
+    nc = bucket.get("noCacheCount", 0)
     if cc == 0 and nc == 0 and t > 1 and not state.get("saturation_fired"):
         events.append({
             "level": "error",
@@ -139,7 +162,13 @@ def analyze(
         })
         state["saturation_fired"] = True
 
-    # --- Throughput drop ---
+
+def _detect_throughput_drop(t: int, bucket: dict, history: list[dict], state: dict, events: list[dict]) -> None:
+    cc = bucket.get("cacheCount", 0) or 0
+    nc = bucket.get("noCacheCount", 0) or 0
+    total_rps = cc + nc
+    prev = history[-1] if history else None
+
     if t > 3 and prev is not None:
         prev_total = (prev.get("cacheCount", 0) or 0) + (prev.get("noCacheCount", 0) or 0)
         if prev_total > 20 and total_rps < prev_total * 0.3 and total_rps < 20 and not state.get("drop_fired"):
@@ -152,7 +181,57 @@ def analyze(
         elif total_rps > prev_total * 0.8 and state.get("drop_fired"):
             state["drop_fired"] = False
 
-    # --- Error rates with probable cause ---
+
+def _detect_rate_limiting(t: int, bucket: dict, config: dict, state: dict, events: list[dict]) -> None:
+    rl_pct = bucket.get("rateLimitedPct")
+    total_rps_bucket = bucket.get("totalRps", 0)
+    if config.get("mode") != "rate_limiting" or rl_pct is None or total_rps_bucket <= 0:
+        return
+
+    rl_count = bucket.get("rateLimited", 0)
+    rate_limit_rps = config.get("rate_limit_rps", 0)
+    last_rl_level = state.get("rl_level", "normal")
+
+    if rl_pct > 50 and last_rl_level != "saturated":
+        events.append({
+            "level": "warn",
+            "chart": "rate_limit",
+            "msg": f"Rate limit saturated: {rl_pct:.0f}% of requests throttled ({rl_count}/{total_rps_bucket} req/s). Traffic is hitting the {rate_limit_rps} RPS ceiling.",
+        })
+        state["rl_level"] = "saturated"
+
+    elif 10 < rl_pct <= 50 and last_rl_level == "normal":
+        events.append({
+            "level": "info",
+            "chart": "rate_limit",
+            "msg": f"Approaching rate limit: {rl_pct:.0f}% of requests throttled. Traffic nearing the {rate_limit_rps} RPS ceiling.",
+        })
+        state["rl_level"] = "approaching"
+
+    elif rl_pct == 0 and last_rl_level != "normal":
+        events.append({
+            "level": "info",
+            "chart": "rate_limit",
+            "msg": "Rate limit no longer throttling. Traffic is within the ceiling.",
+        })
+        state["rl_level"] = "normal"
+
+    if rate_limit_rps > 0:
+        pct_of_ceiling = round(total_rps_bucket / rate_limit_rps * 100, 1)
+        if pct_of_ceiling > 90 and not state.get("rl_ceiling_fired"):
+            events.append({
+                "level": "info",
+                "chart": "rate_limit",
+                "msg": f"Throughput at {pct_of_ceiling}% of rate limit ceiling ({total_rps_bucket}/{rate_limit_rps} RPS).",
+            })
+            state["rl_ceiling_fired"] = True
+
+
+def _detect_error_spikes(bucket: dict, state: dict, events: list[dict]) -> None:
+    cv = bucket.get("cacheHit")
+    nv = bucket.get("noCache")
+    mr = bucket.get("cacheMissRate")
+
     for key, label, is_cached in [
         ("cachePct", "Cached", True),
         ("noCachePct", "Uncached", False),
@@ -176,5 +255,3 @@ def analyze(
                     "msg": f"{label} error rate at {val:.0f}% — {val:.0f}% of requests are timing out.{cause}",
                 })
             state[f"err_{key}"] = val
-
-    return events

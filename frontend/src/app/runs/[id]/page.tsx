@@ -4,8 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { API_BASE } from "@/lib/api";
-import { LatencyChart, type LatencyPoint } from "@/components/LatencyChart";
+import { LatencyChart } from "@/components/LatencyChart";
 import { ErrorChart } from "@/components/ErrorChart";
+import type { LatencyPoint, RateLimitComparison } from "@/lib/types";
 
 type RunDetail = {
   run_id: string;
@@ -16,11 +17,16 @@ type RunDetail = {
     concurrency: number;
     ramp_up: number;
     duration: number;
+    mode?: string;
+    rate_limit_rps?: number | null;
+    avg_rps?: number | null;
+    avg_throttled_pct?: number | null;
+    peak_rps?: number | null;
     avg_cache_ms: number | null;
     avg_no_cache_ms: number | null;
     avg_cache_steady_ms: number | null;
     avg_no_cache_steady_ms: number | null;
-    comparison: { cache_ms: number; no_cache_ms: number; difference_ms: number; percentage_faster: number; winner: "cache" | "no_cache" | "tie" } | null;
+    comparison: ({ cache_ms: number; no_cache_ms: number; difference_ms: number; percentage_faster: number; winner: "cache" | "no_cache" | "tie" } | RateLimitComparison) | null;
     analysis: { why: string; recommendation: string } | null;
     started_at: string | null;
     completed_at: string | null;
@@ -29,15 +35,7 @@ type RunDetail = {
   metrics: LatencyPoint[];
 };
 
-function fmtDate(iso: string | null) {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  const parts = d.toLocaleString("en-US", {
-    month: "short", day: "numeric", year: "numeric",
-    hour: "numeric", minute: "2-digit", hour12: true,
-  }).split(", ");
-  return `${parts[0]} ${parts[1]}, ${parts[2].toLowerCase()}`;
-}
+import { fmtDate } from "@/lib/utils";
 
 export default function RunDetailPage() {
   const params = useParams();
@@ -62,6 +60,10 @@ export default function RunDetailPage() {
   const metrics = run?.metrics ?? [];
   const config = run?.config;
   const rampUp = config?.ramp_up ?? 0;
+  const isRateLimit = config?.mode === "rate_limiting";
+  const rlComparison = isRateLimit && config?.comparison && "mode" in config.comparison && config.comparison.mode === "rate_limiting"
+    ? config.comparison as RateLimitComparison
+    : null;
 
   const logEntries = useMemo(() => {
     const entries: { t: number; level: string; chart: string; msg: string }[] = [];
@@ -107,26 +109,34 @@ export default function RunDetailPage() {
               {config?.profile_label || "Run"} <span className="text-sm font-mono font-normal text-zinc-400">#{runId}</span>
             </h1>
           </div>
-          <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium ${
-            run.status === "completed"
-              ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300"
-              : "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300"
-          }`}>
-            {run.status === "completed" && <span className="h-1.5 w-1.5 rounded-full bg-green-500" />}
-            {run.status}
-          </span>
+          <div className="flex items-center gap-2">
+            {isRateLimit && (
+              <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300">
+                Rate Limiting
+              </span>
+            )}
+            <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium ${
+              run.status === "completed"
+                ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300"
+                : "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300"
+            }`}>
+              {run.status === "completed" && <span className="h-1.5 w-1.5 rounded-full bg-green-500" />}
+              {run.status}
+            </span>
+          </div>
         </div>
 
         {/* Config info */}
-        <div className="grid grid-cols-4 gap-2 mb-4">
+        <div className={`grid gap-2 mb-4 ${isRateLimit ? "grid-cols-5" : "grid-cols-4"}`}>
           {[
             { label: "Users", value: config?.concurrency },
             { label: "Ramp-up", value: config?.ramp_up ? `${config.ramp_up}s` : null },
             { label: "Duration", value: config?.duration ? `${config.duration}s` : null },
             { label: "Started", value: config?.started_at ? fmtDate(config.started_at) : null, small: true },
+            ...(isRateLimit && config?.rate_limit_rps ? [{ label: "Ceiling", value: `${config.rate_limit_rps} rps`, small: true }] : []),
           ].filter((c) => c.value != null).map((c) => (
             <div key={c.label} className="glass-card rounded-lg px-3 py-2 text-center">
-              <div className={`${c.small ? "text-xs" : "text-lg"} font-bold text-zinc-900 dark:text-zinc-50`}>{c.value}</div>
+              <div className={`${c.small ? "text-xs" : "text-lg"} font-bold text-zinc-900 dark:text-zinc-50`}>{String(c.value)}</div>
               <div className="text-[11px] text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">{c.label}</div>
             </div>
           ))}
@@ -136,32 +146,41 @@ export default function RunDetailPage() {
         <div className="flex flex-col lg:flex-row gap-4 mb-4">
           <div className="flex-1 glass-card rounded-lg border border-zinc-200 dark:border-0 px-6 pt-4 pb-0 h-[240px] lg:h-[340px] flex flex-col">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-0.5 shrink-0">
-              <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">Latency</span>
-              <div className="ml-auto relative flex rounded-md border border-zinc-700/30 overflow-hidden">
-                <div
-                  className="absolute inset-y-0 bg-amber-600/80 transition-all duration-200 ease-out"
-                  style={{ width: "33.333%", left: `${percentile === "p50" ? 0 : percentile === "p95" ? 33.333 : 66.666}%` }}
-                />
-                {(["p50", "p95", "p99"] as const).map((p) => (
-                  <button
-                    key={p}
-                    onClick={() => setPercentile(p)}
-                    className={`relative z-10 flex-1 px-3 py-0.5 text-[11px] font-medium transition-colors ${
-                      percentile === p ? "text-white" : "text-zinc-500 hover:text-zinc-300"
-                    }`}
-                  >
-                    {p}
-                  </button>
-                ))}
-              </div>
-              <span className="flex items-center gap-1.5 text-[11px]">
-                <span className="h-2.5 w-2.5 rounded-sm bg-green-500/60" />
-                <span className="text-zinc-400">Cache Hit</span>
+              <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">
+                {isRateLimit ? "Throughput" : "Latency"}
               </span>
-              <span className="flex items-center gap-1.5 text-[11px]">
-                <span className="h-2.5 w-2.5 rounded-sm bg-red-500/60" />
-                <span className="text-zinc-400">No Cache</span>
-              </span>
+              {!isRateLimit && (
+                <>
+                  <div className="ml-auto relative flex rounded-md border border-zinc-700/30 overflow-hidden">
+                    <div
+                      className="absolute inset-y-0 bg-amber-600/80 transition-all duration-200 ease-out"
+                      style={{ width: "33.333%", left: `${percentile === "p50" ? 0 : percentile === "p95" ? 33.333 : 66.666}%` }}
+                    />
+                    {(["p50", "p95", "p99"] as const).map((p) => (
+                      <button
+                        key={p}
+                        onClick={() => setPercentile(p)}
+                        className={`relative z-10 flex-1 px-3 py-0.5 text-[11px] font-medium transition-colors ${
+                          percentile === p ? "text-white" : "text-zinc-500 hover:text-zinc-300"
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="flex items-center gap-1.5 text-[11px]">
+                    <span className="h-2.5 w-2.5 rounded-sm bg-green-500/60" />
+                    <span className="text-zinc-400">Cache Hit</span>
+                  </span>
+                  <span className="flex items-center gap-1.5 text-[11px]">
+                    <span className="h-2.5 w-2.5 rounded-sm bg-red-500/60" />
+                    <span className="text-zinc-400">No Cache</span>
+                  </span>
+                </>
+              )}
+              {isRateLimit && (
+                <span className="ml-auto text-[11px] text-zinc-400">RPS over time</span>
+              )}
             </div>
             <div className="flex-1 min-h-0">
               <LatencyChart data={metrics} rampUp={rampUp} percentile={percentile} activeLine={hoveredEvent?.t ?? null} hoveredPoint={hoveredEvent?.chart === "latency" ? hoveredPoint : null} />
@@ -184,11 +203,11 @@ export default function RunDetailPage() {
                   <span className="shrink-0 mt-0.5 tabular-nums text-zinc-600">@{String(e.t).padStart(2, " ")}</span>
                   <span className="shrink-0">
                     {e.level === "error" ? (
-                      <span className="text-red-400">✕</span>
+                      <span className="text-red-400">&#10005;</span>
                     ) : e.level === "warn" ? (
-                      <span className="text-amber-400">△</span>
+                      <span className="text-amber-400">&#9651;</span>
                     ) : (
-                      <span className="text-zinc-500">○</span>
+                      <span className="text-zinc-500">&#9675;</span>
                     )}
                   </span>
                   <span className={e.level === "error" ? "text-red-300" : e.level === "warn" ? "text-amber-300" : "text-zinc-400"}>{e.msg}</span>
@@ -201,43 +220,91 @@ export default function RunDetailPage() {
         {/* Comparison */}
         {comparison && (
           <div className="glass-card rounded-lg px-4 py-4 mb-4">
-            <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide mb-3">
-              Cache Comparison (Steady-state)
-            </div>
-            <div className="grid grid-cols-2 gap-3 mb-4">
-              <div className="rounded-lg border border-green-500/30 bg-green-500/5 px-3 py-2.5 text-center">
-                <div className="text-2xl font-bold text-green-600 dark:text-green-400">{comparison.cache_ms}ms</div>
-                <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Cache</div>
-              </div>
-              <div className="rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-2.5 text-center">
-                <div className="text-2xl font-bold text-red-600 dark:text-red-400">{comparison.no_cache_ms}ms</div>
-                <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">No Cache</div>
-              </div>
-            </div>
-            <div className="rounded-lg bg-zinc-100 dark:bg-zinc-800 px-3 py-3">
-              <div className="text-center">
-                {comparison.winner === "tie" ? (
-                  <div>
-                    <div className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">Performance is tied</div>
+            {rlComparison ? (
+              <>
+                <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide mb-3">
+                  Rate Limit Results (Steady-state)
+                </div>
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                  <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 px-3 py-2.5 text-center">
+                    <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">{rlComparison.avg_rps} rps</div>
+                    <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Avg Throughput</div>
                   </div>
-                ) : comparison.winner === "cache" ? (
-                  <div>
-                    <div className="text-sm font-semibold text-green-600 dark:text-green-400">Cache is {comparison.percentage_faster}% faster</div>
-                    <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{comparison.difference_ms}ms advantage</div>
+                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2.5 text-center">
+                    <div className="text-2xl font-bold text-amber-600 dark:text-amber-400">{rlComparison.avg_throttled_pct}%</div>
+                    <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Avg Throttled</div>
                   </div>
-                ) : (
-                  <div>
-                    <div className="text-sm font-semibold text-amber-600 dark:text-amber-400">No-cache is {Math.abs(comparison.percentage_faster)}% faster</div>
-                    <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{Math.abs(comparison.difference_ms)}ms advantage</div>
+                </div>
+                <div className="grid grid-cols-3 gap-2 mb-4">
+                  <div className="rounded-lg bg-zinc-100 dark:bg-zinc-800 px-2 py-2 text-center">
+                    <div className="text-sm font-bold text-zinc-700 dark:text-zinc-300">{rlComparison.peak_rps} rps</div>
+                    <div className="text-[10px] text-zinc-500 dark:text-zinc-400">Peak</div>
                   </div>
-                )}
-              </div>
-            </div>
+                  <div className="rounded-lg bg-zinc-100 dark:bg-zinc-800 px-2 py-2 text-center">
+                    <div className="text-sm font-bold text-zinc-700 dark:text-zinc-300">{rlComparison.rate_limit_ceiling} rps</div>
+                    <div className="text-[10px] text-zinc-500 dark:text-zinc-400">Ceiling</div>
+                  </div>
+                  <div className="rounded-lg bg-zinc-100 dark:bg-zinc-800 px-2 py-2 text-center">
+                    <div className="text-sm font-bold text-zinc-700 dark:text-zinc-300">{rlComparison.avg_rps_pct_of_ceiling}%</div>
+                    <div className="text-[10px] text-zinc-500 dark:text-zinc-400">Of Ceiling</div>
+                  </div>
+                </div>
+                <div className="rounded-lg bg-zinc-100 dark:bg-zinc-800 px-3 py-3">
+                  <div className="text-center">
+                    <div className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">
+                      {rlComparison.avg_throttled_pct > 50
+                        ? "Ceiling was heavily hit — consider increasing the limit or optimizing endpoints"
+                        : rlComparison.avg_throttled_pct > 10
+                        ? "Ceiling was occasionally hit — traffic near the boundary"
+                        : "Traffic stayed well within the rate limit ceiling"}
+                    </div>
+                    <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+                      {rlComparison.total_throttled} of {rlComparison.total_passed + rlComparison.total_throttled} requests were throttled
+                    </div>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide mb-3">
+                  Cache Comparison (Steady-state)
+                </div>
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                  <div className="rounded-lg border border-green-500/30 bg-green-500/5 px-3 py-2.5 text-center">
+                    <div className="text-2xl font-bold text-green-600 dark:text-green-400">{(comparison as { cache_ms: number }).cache_ms}ms</div>
+                    <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Cache</div>
+                  </div>
+                  <div className="rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-2.5 text-center">
+                    <div className="text-2xl font-bold text-red-600 dark:text-red-400">{(comparison as { no_cache_ms: number }).no_cache_ms}ms</div>
+                    <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">No Cache</div>
+                  </div>
+                </div>
+                <div className="rounded-lg bg-zinc-100 dark:bg-zinc-800 px-3 py-3">
+                  <div className="text-center">
+                    {(comparison as { winner: string }).winner === "tie" ? (
+                      <div>
+                        <div className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">Performance is tied</div>
+                      </div>
+                    ) : (comparison as { winner: string }).winner === "cache" ? (
+                      <div>
+                        <div className="text-sm font-semibold text-green-600 dark:text-green-400">Cache is {(comparison as { percentage_faster: number }).percentage_faster}% faster</div>
+                        <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{(comparison as { difference_ms: number }).difference_ms}ms advantage</div>
+                      </div>
+                    ) : (
+                      <div>
+                        <div className="text-sm font-semibold text-amber-600 dark:text-amber-400">No-cache is {Math.abs((comparison as { percentage_faster: number }).percentage_faster)}% faster</div>
+                        <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{Math.abs((comparison as { difference_ms: number }).difference_ms)}ms advantage</div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         )}
 
-        {/* Analysis */}
-        {analysis && (
+        {/* Analysis — cache mode only */}
+        {!isRateLimit && analysis && (
           <div className="glass-card rounded-lg px-4 py-4 mb-4">
             <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide mb-3">AI Analysis</div>
             <div className="text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed space-y-1">
@@ -247,8 +314,8 @@ export default function RunDetailPage() {
           </div>
         )}
 
-        {/* Error chart */}
-        {metrics.some((d) => (d.noCachePct ?? 0) > 0 || (d.cachePct ?? 0) > 0 || (d.cacheMissRate ?? 0) > 0) && (
+        {/* Error chart — cache mode only */}
+        {!isRateLimit && metrics.some((d) => (d.noCachePct ?? 0) > 0 || (d.cachePct ?? 0) > 0 || (d.cacheMissRate ?? 0) > 0) && (
           <div className="glass-card rounded-lg border border-zinc-200 dark:border-0 px-6 pt-4 pb-3 mb-4">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-1 shrink-0">
               <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">Errors</span>
