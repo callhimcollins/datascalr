@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine,
+  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from "recharts";
 import { LatencyChart } from "@/components/LatencyChart";
 import { ErrorChart } from "@/components/ErrorChart";
@@ -257,9 +257,6 @@ export function RunningView({
                     <Tooltip content={<RpsTooltip />} />
                     <Area type="monotone" dataKey="totalRps" name="Actual RPS" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.2} strokeWidth={2} dot={false} isAnimationActive={false} />
                     <Area type="monotone" dataKey="rateLimited" name="Rate-limited (429)" stroke="#f59e0b" fill="#f59e0b" fillOpacity={0.2} strokeWidth={1.5} dot={false} isAnimationActive={false} />
-                    {rlComparison && (
-                      <ReferenceLine y={rlComparison.rate_limit_ceiling} stroke="#ef4444" strokeDasharray="6 3" label={{ value: "ceiling", position: "right", style: { fontSize: 10, fill: "#ef4444" } }} />
-                    )}
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
