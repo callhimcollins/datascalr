@@ -85,11 +85,35 @@ function ConfigureInner() {
 
     // Reconfigure mode — platform unchanged, reuse existing parent
     if (parentData && !platformChanged && parentId) {
-      setGeneratedConfig({
-        parent_id: parentId,
-        base_url: parentData.base_url,
-        profiles: parentData.profiles,
-      });
+      const data = { parent_id: parentId, base_url: parentData.base_url, profiles: parentData.profiles };
+
+      if (mode === "rate_limiting" && data.profiles?.length > 0) {
+        const profile = data.profiles[0];
+        setSim({
+          baseUrl: data.base_url,
+          parentId: data.parent_id,
+          endpoints: profile.endpoints.map((ep) => ({
+            method: ep.method,
+            path: ep.path,
+            weight: ep.weight,
+          })),
+          mode: "rate_limiting",
+          rateLimitRps: Number(form.rateLimitRps) || undefined,
+        });
+        const qs = new URLSearchParams({
+          platform: form.platform,
+          concurrency: form.concurrency || "1",
+          rampUp: form.rampUp || "0",
+          duration: form.duration || "1",
+          profile: profile.label,
+          mode: "rate_limiting",
+        });
+        if (form.rateLimitRps) qs.set("rateLimitRps", form.rateLimitRps);
+        router.push(`/simulate?${qs.toString()}`);
+        return;
+      }
+
+      setGeneratedConfig(data);
       setSelectedProfile(null);
       setStep(2);
       return;
@@ -118,6 +142,34 @@ function ConfigureInner() {
       }
 
       const data: FullConfig = await res.json();
+
+      // Rate limiting mode: skip profile picker, go straight to simulation
+      if (mode === "rate_limiting" && data.profiles?.length > 0) {
+        const profile = data.profiles[0];
+        setSim({
+          baseUrl: data.base_url,
+          parentId: data.parent_id,
+          endpoints: profile.endpoints.map((ep) => ({
+            method: ep.method,
+            path: ep.path,
+            weight: ep.weight,
+          })),
+          mode: "rate_limiting",
+          rateLimitRps: Number(form.rateLimitRps) || undefined,
+        });
+        const qs = new URLSearchParams({
+          platform: form.platform,
+          concurrency: form.concurrency || "1",
+          rampUp: form.rampUp || "0",
+          duration: form.duration || "1",
+          profile: profile.label,
+          mode: "rate_limiting",
+        });
+        if (form.rateLimitRps) qs.set("rateLimitRps", form.rateLimitRps);
+        router.push(`/simulate?${qs.toString()}`);
+        return;
+      }
+
       setGeneratedConfig(data);
       setSelectedProfile(null);
       setStep(2);
