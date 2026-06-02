@@ -250,6 +250,24 @@ export function RunningView({
               </div>
             </>
           )}
+          {isRateLimit && latencyHistory.length > 0 && (
+            <div className="shrink-0 flex items-center justify-center gap-6 pt-2 pb-1 text-xs border-t border-zinc-700/30 mt-1">
+              <span className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-sm bg-blue-500/60" />
+                <span className="text-zinc-400">Avg RPS:</span>
+                <span className="font-mono tabular-nums text-blue-400">
+                  {Math.round(latencyHistory.reduce((s, d) => s + (d.totalRps ?? 0), 0) / latencyHistory.length)}
+                </span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-sm bg-amber-500/60" />
+                <span className="text-zinc-400">Rate-limited:</span>
+                <span className="font-mono tabular-nums text-amber-400">
+                  {latencyHistory.reduce((s, d) => s + (d.rateLimited ?? 0), 0)}
+                </span>
+              </span>
+            </div>
+          )}
         </div>
         <div className="w-full lg:w-80 glass-card rounded-lg border border-zinc-200 dark:border-0 px-5 py-4 lg:h-[420px] h-[200px] flex flex-col">
           <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide mb-2 shrink-0">
