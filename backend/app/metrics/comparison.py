@@ -62,7 +62,6 @@ def _compute_rate_limit_results(metrics: list[dict], config: dict) -> dict:
     avg_rps = round(sum(rps_vals) / len(rps_vals), 1) if rps_vals else 0
     peak_rps = max(rps_vals) if rps_vals else 0
     avg_rl_pct = round(sum(rl_pct_vals) / len(rl_pct_vals), 1) if rl_pct_vals else 0
-    pct_of_ceiling = round(avg_rps / ceiling * 100, 1) if ceiling > 0 else 0
 
     total_rate_limited = sum(m.get("rateLimited", 0) for m in metrics if m.get("rateLimited") is not None)
     total_passed = sum(m.get("totalRps", 0) for m in metrics if m.get("totalRps") is not None)
@@ -73,7 +72,6 @@ def _compute_rate_limit_results(metrics: list[dict], config: dict) -> dict:
         "peak_rps": peak_rps,
         "rate_limit_ceiling": ceiling,
         "avg_rl_pct": avg_rl_pct,
-        "avg_rps_pct_of_ceiling": pct_of_ceiling,
         "total_rate_limited": total_rate_limited,
         "total_passed": total_passed,
     }
