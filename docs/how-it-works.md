@@ -318,7 +318,98 @@ Then when you click Simulate:
 
 ---
 
-## Key Terms Glossary
+## Real-World Rate Limiting Implementation Strategies
+
+### Algorithms
+
+**Fixed Window** (what DataScalr uses)
+Count requests in a 1-second bucket per VU. Resets every second. Simple and cheap, but allows 2x bursts at the boundary — a VU could fire 2 requests at 0.99s and 2 more at 1.01s, getting 4 requests through in 0.02s while the ceiling is 2 req/s.
+
+**Sliding Window Log**
+Track a timestamp for each request per user. When a new request comes in, remove timestamps older than the window (e.g., 1 second), then check if the remaining count exceeds the limit. Precise — no boundary bursts — but memory grows with request rate per user.
+
+**Sliding Window Counter** (most common in production)
+Compromise between the two above. Divide time into small buckets (e.g., 1 second). When checking the limit, take the current bucket's count + the previous bucket's count weighted by how far into the current bucket we are. Used by Redis-based rate limiters (Redis calls this "approximate sliding window").
+
+```
+Window = 10 seconds, limit = 100
+At 7.5 seconds into the current 10s window:
+  Current bucket: 60 requests × (7.5 / 10) = 45
+  Previous bucket: 80 requests × (1 - 7.5 / 10) = 20
+  Effective count: 45 + 20 = 65
+```
+
+**Token Bucket**
+A bucket holds N tokens. Each request consumes one. Tokens refill at a fixed rate (e.g., 2 tokens per second) up to a maximum capacity. Allows short bursts when tokens accumulate, then enforces the steady rate. Used by AWS API Gateway and Kong.
+
+**Leaky Bucket**
+Requests drip out of the bucket at a fixed rate. If the bucket overflows, excess requests get 429'd. No bursting — perfectly smooth rate. Used in network traffic shaping and some rate limiter libraries.
+
+### Where Rate Limiting Lives
+
+| Layer | How it works | Example |
+|-------|-------------|---------|
+| **API Gateway** | Inspects all traffic before it reaches your app | Cloudflare, AWS API Gateway, Kong |
+| **Application Middleware** | Inside your app, in the request pipeline | FastAPI middleware (like DataScalr's target API), Django REST throttling |
+| **Database** | Limits queries per user or per connection | PostgreSQL `statement_timeout`, RDS Proxy |
+| **Client-side** | The client throttles itself to avoid hitting limits | Our original implementation, SDK-based rate limiters |
+
+### What Can Be Limited
+
+**Per-user / Per-IP:** Each client has their own counter. Most common API pattern. What DataScalr implements.
+
+**Per-endpoint:** Different ceilings for cheap vs expensive endpoints. For example, `/api/items` allows 100 req/s, but `/api/items/search` only allows 10 req/s because search is expensive.
+
+**Global:** A single cap across all users. Protects the whole system from aggregate overload regardless of how many users are active.
+
+**Concurrency-based:** Limits simultaneous in-flight requests, not request rate. Useful for WebSocket connections or long-polling APIs where rate per second is less meaningful.
+
+### Production Concerns
+
+**Distributed rate limiting:** With 10 app servers behind a load balancer, each server has its own in-memory counters. A user who sends 10 requests might hit 5 different servers, each seeing only 2 requests and allowing them through — even though the total is 10. Fixes:
+- Use a shared Redis instance with atomic INCR + EXPIRE (adds network hop but accurate)
+- Each server gets 1/N of the total quota (approximate, no shared state)
+- Hybrid: local fast counters + Redis for cross-checking
+
+**Rate limit headers:** Real APIs don't just return 429 — they tell the client what to do next:
+
+```
+X-RateLimit-Limit: 2
+X-RateLimit-Remaining: 0
+X-RateLimit-Reset: 0.7
+Retry-After: 1
+```
+
+Well-behaved clients read these headers and **back off** — they wait `Retry-After` seconds before retrying. DataScalr's VUs don't back off (they keep firing at full speed), which is why they can pile up thousands of 429s. In production, a client that ignores 429s and keeps hammering would likely get blocked permanently or rate-limited more aggressively.
+
+**Graceful degradation:** Instead of returning 429, some APIs:
+- Queue the request and process it later (async processing)
+- Return stale cached data instead of rejecting
+- Downgrade response quality (lower resolution images, fewer search results)
+
+**Cost-based limiting:** Not all requests cost the same. A search query might be 10× more expensive than a list query. Instead of counting requests, some APIs count "cost units" — a list costs 1, a search costs 10, and the limit is 1000 units per hour.
+
+### Why 66% Rate-Limited for 10 VUs vs 10.6% for 30 VUs
+
+This isn't a rate limiter issue — it's an event loop scheduling issue.
+
+With 10 VUs at 0.1s think time, each VU gets frequent CPU time and fires ~6-7 req/s. The ceiling is 2 req/s per VU, so ~66% of requests are rejected.
+
+With 30 VUs at the same 0.1s think time, the event loop has to cycle through 30 tasks instead of 10. Each VU spends more time waiting its turn in the queue, so the effective rate per VU drops to ~2 req/s — right at the ceiling. Only 10.6% exceed it.
+
+The rate limiter is working correctly in both cases. The VUs' *ability to exceed the ceiling* is what changes based on how many of them are competing for the event loop.
+
+### Does DataScalr Degrade Over Time?
+
+**During a single run:** No. Each run is bounded by a fixed duration (e.g., 30 seconds). Metrics are accumulated per-second and sent via SSE. Memory usage stays flat regardless of run length.
+
+**Across multiple runs:** Partially. Completed runs' metrics are kept in the `active_runs` in-memory dictionary. If you do hundreds of runs without restarting the backend, memory usage grows. There's no automatic cleanup — the data is also persisted to Supabase, so the in-memory copy is technically redundant after completion.
+
+**The event loop:** Doesn't degrade with runtime. asyncio's event loop has no cumulative overhead — it processes whatever tasks are scheduled at any given moment. Running for an hour doesn't slow it down.
+
+**The target API (PostgreSQL + Redis):** Can degrade if you hammer it long enough. PostgreSQL's connection pool can accumulate dead connections. Redis memory can grow. But `docker compose down && docker compose up -d` resets everything.
+
+---
 
 | Term | What it is |
 |------|-----------|

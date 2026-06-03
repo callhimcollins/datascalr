@@ -10,6 +10,56 @@ from .utils import build_body, build_url, pick_endpoint
 from ..metrics.collector import MetricsCollector, Sample
 
 
+def _calc_think_time(is_rate_limit_mode: bool, base_think_time: float) -> float:
+    if is_rate_limit_mode:
+        return max(0.05, random.gauss(0.15, 0.05))
+    return max(0.5, random.gauss(base_think_time, base_think_time * 0.3))
+
+
+def _build_headers(is_rate_limit_mode: bool, config: dict, vu_id: int) -> dict:
+    if not is_rate_limit_mode:
+        return {}
+    rps = config.get("rate_limit_rps", 10)
+    return {"X-VU-ID": str(vu_id), "X-RateLimit-RPS": str(rps)}
+
+
+async def _execute_request(
+    client: httpx.AsyncClient,
+    method: str,
+    url: str,
+    body: dict | None,
+    headers: dict,
+) -> tuple[int, str | None, httpx.Response | None]:
+    try:
+        resp = await asyncio.wait_for(
+            client.request(method=method, url=url, json=body, headers=headers, timeout=10.0),
+            timeout=10.0,
+        )
+        status_code = resp.status_code
+        error = f"http_{status_code}" if status_code >= 400 else None
+        return status_code, error, resp
+    except (httpx.TimeoutException, asyncio.TimeoutError):
+        return 0, "timeout", None
+    except httpx.RequestError as e:
+        return 0, f"connection_error: {type(e).__name__}", None
+
+
+def _parse_cache_hit(
+    is_cached: bool,
+    error: str | None,
+    status_code: int,
+    resp: httpx.Response | None,
+) -> bool | None:
+    if not is_cached or error is not None or resp is None or not status_code:
+        return None
+    cache_header = resp.headers.get("x-cache")
+    if cache_header == "HIT":
+        return True
+    if cache_header == "MISS":
+        return False
+    return None
+
+
 async def virtual_user_loop(
     vu_id: int,
     config: dict,
@@ -28,55 +78,21 @@ async def virtual_user_loop(
     is_rate_limit_mode = config.get("mode") == "rate_limiting"
 
     while not stop_event.is_set():
-        # Rate limiting mode: fast fire rate to actually trigger 429s from the target API
-        if is_rate_limit_mode:
-            think_time = max(0.05, random.gauss(0.15, 0.05))
-        else:
-            think_time = max(0.5, random.gauss(base_think_time, base_think_time * 0.3))
+        think_time = _calc_think_time(is_rate_limit_mode, base_think_time)
 
         endpoint = pick_endpoint(endpoints)
         url = build_url(config["base_url"], endpoint)
         body = build_body(endpoint.get("body_template"))
         is_cached = cached or "cached=true" in url.lower()
-
-        # In rate limiting mode, identify each VU and pass the configured ceiling
-        headers = {}
-        if is_rate_limit_mode:
-            rps = config.get("rate_limit_rps", 10)
-            headers = {"X-VU-ID": str(vu_id), "X-RateLimit-RPS": str(rps)}
+        headers = _build_headers(is_rate_limit_mode, config, vu_id)
 
         start = time.monotonic()
-        error: str | None = None
-        status_code = 0
-
-        try:
-            resp = await asyncio.wait_for(
-                client.request(
-                    method=endpoint["method"],
-                    url=url,
-                    json=body,
-                    headers=headers,
-                    timeout=10.0,
-                ),
-                timeout=10.0,
-            )
-            status_code = resp.status_code
-            if status_code >= 400:
-                error = f"http_{status_code}"
-        except (httpx.TimeoutException, asyncio.TimeoutError):
-            error = "timeout"
-        except httpx.RequestError as e:
-            error = f"connection_error: {type(e).__name__}"
-
+        status_code, error, resp = await _execute_request(
+            client, endpoint["method"], url, body, headers,
+        )
         latency = (time.monotonic() - start) * 1000
 
-        cache_hit: bool | None = None
-        if is_cached and error is None:
-            cache_header = resp.headers.get("x-cache") if status_code else None
-            if cache_header == "HIT":
-                cache_hit = True
-            elif cache_header == "MISS":
-                cache_hit = False
+        cache_hit = _parse_cache_hit(is_cached, error, status_code, resp)
 
         collector.add_sample(Sample(
             latency_ms=latency,
