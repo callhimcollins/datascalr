@@ -1,4 +1,4 @@
-{$DOMAIN} {
+{$DOMAIN:":80"} {
     reverse_proxy /api/* backend:8000 {
         flush_interval -1
     }
